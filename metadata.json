@@ -1,0 +1,6 @@
+{
+  "name": "Tre13ze Journal v1.0",
+  "description": "Application SaaS de journal de trading premium avec analyses de performance, calendrier P&L, courbe d'équité et coach IA.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
