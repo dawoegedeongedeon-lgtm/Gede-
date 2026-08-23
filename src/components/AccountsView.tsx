@@ -452,17 +452,17 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
             </div>
 
             {/* Actions */}
-            <div className="flex items-center justify-end gap-3 pt-3 border-t border-zinc-800">
+            <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-end gap-2.5 sm:gap-3 pt-3 border-t border-zinc-800">
               <button
                 type="button"
                 onClick={handleCancelForm}
-                className="px-4 py-2 rounded-xl border border-zinc-800 bg-zinc-900 text-zinc-300 hover:text-white"
+                className="min-h-[44px] px-5 py-2 rounded-xl border border-zinc-800 bg-zinc-900 text-zinc-300 hover:text-white font-semibold transition-all active:scale-[0.98]"
               >
                 Annuler
               </button>
               <button
                 type="submit"
-                className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 font-semibold text-white shadow-lg shadow-blue-600/30"
+                className="min-h-[44px] px-6 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 font-bold text-white shadow-lg shadow-blue-600/30 transition-all active:scale-[0.98]"
               >
                 {editingAccountId ? 'Mettre à jour le compte' : 'Enregistrer le compte'}
               </button>
@@ -686,22 +686,22 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                   {!isSelected ? (
                     <button
                       onClick={() => onSelectAccount(acc.id)}
-                      className="flex-1 flex items-center justify-center gap-2 rounded-xl border border-zinc-700 bg-zinc-800/90 hover:bg-blue-600 hover:border-blue-500 hover:text-white py-2 text-xs font-semibold text-zinc-200 transition-all shadow-sm"
+                      className="min-h-[44px] flex-1 flex items-center justify-center gap-2 rounded-xl border border-zinc-700 bg-zinc-800/90 hover:bg-blue-600 hover:border-blue-500 hover:text-white py-2 px-3 text-xs font-bold text-zinc-200 transition-all shadow-sm active:scale-[0.98]"
                     >
-                      <Check className="h-3.5 w-3.5" />
+                      <Check className="h-4 w-4" />
                       <span>Basculer sur ce compte</span>
                     </button>
                   ) : (
-                    <div className="flex-1 flex items-center justify-between gap-2">
+                    <div className="min-h-[44px] flex-1 flex items-center justify-between gap-2 px-1">
                       <span className="text-[11px] text-emerald-400 font-medium flex items-center gap-1 font-mono">
                         ✓ Vue active sur le Dashboard
                       </span>
                       {onOpenNewTradeForAccount && (
                         <button
                           onClick={() => onOpenNewTradeForAccount(acc.name)}
-                          className="text-xs text-blue-400 hover:underline font-medium"
+                          className="min-h-[38px] px-2.5 rounded-lg bg-blue-600/20 text-blue-300 hover:bg-blue-600/30 text-xs font-semibold"
                         >
-                          + Ajouter trade →
+                          + Trade →
                         </button>
                       )}
                     </div>
@@ -711,9 +711,9 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                     <button
                       onClick={onOpenMt5Sync}
                       title="Gérer la synchronisation MT5"
-                      className="px-2.5 py-2 rounded-xl border border-blue-500/30 bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 text-xs font-semibold flex items-center gap-1 transition-all"
+                      className="min-h-[44px] px-3.5 py-2 rounded-xl border border-blue-500/30 bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 text-xs font-bold flex items-center gap-1.5 transition-all active:scale-[0.98]"
                     >
-                      <Activity className="h-3.5 w-3.5" />
+                      <Activity className="h-4 w-4" />
                       <span className="hidden sm:inline">MT5</span>
                     </button>
                   )}

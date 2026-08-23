@@ -1,13 +1,22 @@
 @import "tailwindcss";
 
 @layer base {
+  :root {
+    color-scheme: dark;
+  }
+
   html, body {
     width: 100%;
     max-width: 100vw;
+    min-height: 100vh;
     overflow-x: hidden;
     position: relative;
+    background-color: #06080d;
+    color: #f4f4f5;
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     -webkit-overflow-scrolling: touch;
     touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
   }
 
   #root {
@@ -15,12 +24,34 @@
     max-width: 100vw;
     overflow-x: hidden;
     min-height: 100vh;
+    display: flex;
+    flex-direction: column;
   }
 
   /* Prevent browser auto-zoom on mobile when focusing inputs */
   @media screen and (max-width: 768px) {
     input, select, textarea {
       font-size: 16px !important;
+    }
+  }
+
+  /* Touch-friendly sizing for smartphone users */
+  @media screen and (max-width: 640px) {
+    button, 
+    a, 
+    input[type="button"], 
+    input[type="submit"], 
+    .touch-target {
+      min-height: 44px;
+    }
+
+    input, select, textarea {
+      min-height: 44px;
+    }
+
+    /* Modal padding safe area */
+    .mobile-modal-container {
+      padding-bottom: max(1.5rem, env(safe-area-inset-bottom));
     }
   }
 
@@ -33,6 +64,22 @@
   *, ::before, ::after {
     box-sizing: border-box;
   }
+}
+
+/* Trading Dark Mode custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #06080d;
+}
+::-webkit-scrollbar-thumb {
+  background: #1e293b;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #334155;
 }
 
 /* Custom scrollbar helpers */
@@ -50,4 +97,17 @@
   max-width: 100%;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
+}
+
+/* Glow effects for trading badges & active states */
+.glow-emerald {
+  box-shadow: 0 0 18px -3px rgba(16, 185, 129, 0.35);
+}
+
+.glow-rose {
+  box-shadow: 0 0 18px -3px rgba(244, 63, 94, 0.35);
+}
+
+.glow-blue {
+  box-shadow: 0 0 20px -3px rgba(59, 130, 246, 0.4);
 }

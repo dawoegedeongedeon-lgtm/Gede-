@@ -1077,21 +1077,21 @@ export const TradeModal: React.FC<TradeModalProps> = ({
             </div>
           </div>
 
-          {/* Footer Actions */}
-          <div className="flex items-center justify-end gap-3 border-t border-zinc-800 pt-4">
+          {/* Footer Actions (Thumb-Friendly on Mobile) */}
+          <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-end gap-2.5 sm:gap-3 border-t border-zinc-800 pt-4">
             <button
               type="button"
               onClick={onClose}
-              className="rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-2 text-zinc-300 hover:text-white font-medium transition-all"
+              className="min-h-[44px] rounded-xl border border-zinc-800 bg-zinc-900 px-5 py-2.5 text-xs sm:text-sm text-zinc-300 hover:text-white font-semibold transition-all active:scale-[0.98]"
             >
               Annuler
             </button>
             <button
               type="submit"
-              className="flex items-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-500 px-5 py-2 font-semibold text-white shadow-lg shadow-blue-600/30 hover:shadow-blue-500/40 active:scale-[0.98] transition-all"
+              className="min-h-[44px] flex items-center justify-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-500 px-6 py-2.5 text-xs sm:text-sm font-bold text-white shadow-lg shadow-blue-600/30 hover:shadow-blue-500/40 active:scale-[0.98] transition-all"
             >
               <Save className="h-4 w-4" />
-              <span>{editTrade ? 'Mettre à jour' : 'Enregistrer le Trade'}</span>
+              <span>{editTrade ? 'Mettre à jour le Trade' : 'Enregistrer le Trade'}</span>
             </button>
           </div>
 

@@ -43,28 +43,97 @@ interface DatabaseSchema {
   updatedAt: string;
 }
 
-function readDatabase(): DatabaseSchema | null {
+const DEFAULT_DB: DatabaseSchema = {
+  users: [],
+  mt5Accounts: [],
+  mt5Logs: [],
+  trades: [],
+  playbooks: [],
+  accounts: [
+    {
+      id: "acc-demo-10k",
+      name: "Compte Démo Exemple (10k)",
+      initialBalance: 10000,
+      accountType: "DEMO_BACKTEST",
+      brokerOrPropFirm: "Paper Trading (Démo)",
+      accountNumber: "#DEMO-10K",
+      currency: "$",
+      description: "Compte d'exemple pour découvrir le journal. Vous pouvez le supprimer à tout moment et créer vos propres comptes.",
+      isDefault: true,
+      createdAt: "2026-08-20",
+    },
+  ],
+  reports: [],
+  initialBalance: 10000,
+  currency: "$",
+  updatedAt: new Date().toISOString(),
+};
+
+let memoryDbCache: DatabaseSchema | null = null;
+
+function readDatabase(): DatabaseSchema {
   try {
     if (fs.existsSync(DB_FILE)) {
       const data = fs.readFileSync(DB_FILE, "utf-8");
-      const parsed = JSON.parse(data);
-      if (!parsed.users) parsed.users = [];
-      if (!parsed.mt5Accounts) parsed.mt5Accounts = [];
-      if (!parsed.mt5Logs) parsed.mt5Logs = [];
-      return parsed;
+      if (data && data.trim().length > 0) {
+        const parsed = JSON.parse(data);
+        if (!parsed.users) parsed.users = [];
+        if (!parsed.mt5Accounts) parsed.mt5Accounts = [];
+        if (!parsed.mt5Logs) parsed.mt5Logs = [];
+        if (!parsed.trades) parsed.trades = [];
+        if (!parsed.playbooks) parsed.playbooks = [];
+        if (!parsed.accounts) parsed.accounts = [];
+        if (!parsed.reports) parsed.reports = [];
+        if (typeof parsed.initialBalance !== "number") parsed.initialBalance = 10000;
+        if (!parsed.currency) parsed.currency = "$";
+        memoryDbCache = parsed;
+        return parsed;
+      }
     }
   } catch (err) {
     console.error("Error reading database file:", err);
   }
-  return null;
+
+  if (memoryDbCache) {
+    return memoryDbCache;
+  }
+
+  // Initialize DB_FILE if missing or corrupted
+  try {
+    const freshDb = JSON.parse(JSON.stringify(DEFAULT_DB));
+    freshDb.updatedAt = new Date().toISOString();
+    fs.writeFileSync(DB_FILE, JSON.stringify(freshDb, null, 2), "utf-8");
+    memoryDbCache = freshDb;
+    return freshDb;
+  } catch (writeErr) {
+    console.error("Failed to auto-create trades_db.json:", writeErr);
+  }
+
+  return memoryDbCache || JSON.parse(JSON.stringify(DEFAULT_DB));
 }
 
 function writeDatabase(db: DatabaseSchema): void {
   try {
     db.updatedAt = new Date().toISOString();
-    fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), "utf-8");
+    if (!db.users) db.users = [];
+    if (!db.mt5Accounts) db.mt5Accounts = [];
+    if (!db.mt5Logs) db.mt5Logs = [];
+    if (!db.trades) db.trades = [];
+    if (!db.playbooks) db.playbooks = [];
+    if (!db.accounts) db.accounts = [];
+    if (!db.reports) db.reports = [];
+    memoryDbCache = db;
+
+    const tempFile = `${DB_FILE}.tmp`;
+    fs.writeFileSync(tempFile, JSON.stringify(db, null, 2), "utf-8");
+    fs.renameSync(tempFile, DB_FILE);
   } catch (err) {
     console.error("Error writing database file:", err);
+    try {
+      fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), "utf-8");
+    } catch (fallbackErr) {
+      console.error("Fallback write also failed:", fallbackErr);
+    }
   }
 }
 
@@ -315,7 +384,42 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json({ limit: "10mb" }));
+  // CORS & Security Pre-flight Middleware for Google AI Studio, Cloud Run & Remote Browsers
+  app.use((req, res, next) => {
+    const origin = req.headers.origin;
+
+    // Dynamically allow origins from Google AI Studio, Google Cloud Run, custom domains, and local preview
+    if (origin) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+    } else {
+      res.setHeader("Access-Control-Allow-Origin", "*");
+    }
+
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD");
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      "Origin, X-Requested-With, Content-Type, Accept, Authorization, Cache-Control, Pragma, Cookie, User-Agent, If-Modified-Since"
+    );
+    res.setHeader(
+      "Access-Control-Expose-Headers",
+      "Content-Length, Content-Type, Date, Server, Set-Cookie, Access-Control-Allow-Origin"
+    );
+    res.setHeader("Access-Control-Max-Age", "86400");
+
+    // Security & mobile browser iframe headers
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Referrer-Policy", "no-referrer-when-downgrade");
+
+    // Handle OPTIONS pre-flight requests immediately with 204 No Content
+    if (req.method === "OPTIONS") {
+      return res.status(204).end();
+    }
+    next();
+  });
+
+  app.use(express.json({ limit: "25mb" }));
+  app.use(express.urlencoded({ extended: true, limit: "25mb" }));
 
   // API Health check
   app.get("/api/health", (_req, res) => {
