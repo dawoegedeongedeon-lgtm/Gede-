@@ -1,13 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   X, 
   Save, 
   Sparkles, 
   Upload, 
   Activity, 
-  Layers, 
   BarChart2, 
-  Plus, 
   Trash2,
   Calendar,
   Clock,
@@ -17,7 +15,14 @@ import {
   ClipboardPaste,
   Image as ImageIcon,
   CheckCircle2,
-  AlertCircle
+  AlertTriangle,
+  ArrowUpRight,
+  ArrowDownRight,
+  TrendingUp,
+  Target,
+  Shield,
+  Layers,
+  Scale
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { Trade, Direction, TradeStatus, AssetClass, TradingSession, Timeframe, EmotionState, CurrencySymbol, TradingAccount } from '../types';
@@ -35,10 +40,10 @@ interface TradeModalProps {
 }
 
 const COMMON_PAIRS = [
-  'NAS100', 'US30', 'SPX500', 'GER40',
+  'BTC/USD', 'ETH/USD', 'SOL/USD',
   'EUR/USD', 'GBP/USD', 'USD/JPY', 'GBP/JPY',
+  'NAS100', 'US30', 'SPX500', 'GER40',
   'XAU/USD', 'WTI',
-  'BTC/USDT', 'ETH/USDT', 'SOL/USDT',
   'NVDA', 'AAPL', 'TSLA'
 ];
 
@@ -79,36 +84,16 @@ const POPULAR_INDICATORS = [
   'Ichimoku Cloud'
 ];
 
-const POPULAR_PATTERNS = [
-  'Tête et Épaules (Head & Shoulders)',
-  'Tête et Épaules Inversée',
-  'Drapeau Haussier (Bull Flag)',
-  'Drapeau Baissier (Bear Flag)',
-  'Double Bottom',
-  'Double Top / Faux Breakout',
-  'Triangle Ascendant',
-  'Triangle Descendant',
-  'Triangle Symétrique',
-  'Order Block / FVG',
-  'Liquidity Sweep',
-  'Range / Consolidation'
-];
-
 export const TradeModal: React.FC<TradeModalProps> = ({
   isOpen,
   onClose,
   onSave,
   editTrade,
   currency,
-  existingStrategies,
+  existingStrategies: _existingStrategies,
   accounts = [],
   defaultSelectedAccountName,
 }) => {
-  const [customIndicatorInput, setCustomIndicatorInput] = useState('');
-  const [customPatternInput, setCustomPatternInput] = useState('');
-  const [supportInput, setSupportInput] = useState('');
-  const [resistanceInput, setResistanceInput] = useState('');
-  
   // Custom account input
   const [customAccountInput, setCustomAccountInput] = useState('');
   const [isCustomAccount, setIsCustomAccount] = useState(false);
@@ -127,8 +112,8 @@ export const TradeModal: React.FC<TradeModalProps> = ({
   const afterZoneRef = useRef<HTMLDivElement>(null);
 
   const [formData, setFormData] = useState<Partial<Trade>>({
-    pair: 'NAS100',
-    assetClass: 'INDICES',
+    pair: 'BTC/USD',
+    assetClass: 'CRYPTO',
     direction: 'LONG',
     status: 'WIN',
     account: defaultAccount,
@@ -138,16 +123,17 @@ export const TradeModal: React.FC<TradeModalProps> = ({
     exitTime: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
     session: 'New York',
     timeframe: '5m',
-    entryPrice: 19800,
-    exitPrice: 19920,
-    stopLoss: 19760,
-    takeProfit: 19920,
-    quantity: 2.0,
-    fees: 4.5,
-    riskAmount: 400,
-    pnl: 1195.5,
+    entryPrice: 65000,
+    exitPrice: 66500,
+    stopLoss: 64500,
+    takeProfit: 66500,
+    quantity: 0.5,
+    fees: 5.0,
+    riskAmount: 250,
+    pnl: 745.0,
     pnlPercentage: 2.98,
-    rMultiple: 2.98,
+    rMultiple: 3.0,
+    theoreticalRR: 3.0,
     strategy: '',
     mistakes: ['None - Followed Plan'],
     emotions: 'DISCIPLINED',
@@ -190,8 +176,8 @@ export const TradeModal: React.FC<TradeModalProps> = ({
       const currentTime = now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
       
       setFormData({
-        pair: 'NAS100',
-        assetClass: 'INDICES',
+        pair: 'BTC/USD',
+        assetClass: 'CRYPTO',
         direction: 'LONG',
         status: 'WIN',
         account: defaultAccount,
@@ -201,16 +187,17 @@ export const TradeModal: React.FC<TradeModalProps> = ({
         exitTime: currentTime,
         session: 'New York',
         timeframe: '5m',
-        entryPrice: 19800,
-        exitPrice: 19920,
-        stopLoss: 19760,
-        takeProfit: 19920,
-        quantity: 2.0,
-        fees: 4.5,
-        riskAmount: 400,
-        pnl: 1195.5,
+        entryPrice: 65000,
+        exitPrice: 66500,
+        stopLoss: 64500,
+        takeProfit: 66500,
+        quantity: 0.5,
+        fees: 5.0,
+        riskAmount: 250,
+        pnl: 745.0,
         pnlPercentage: 2.98,
-        rMultiple: 2.98,
+        rMultiple: 3.0,
+        theoreticalRR: 3.0,
         strategy: '',
         mistakes: ['None - Followed Plan'],
         emotions: 'DISCIPLINED',
@@ -231,44 +218,169 @@ export const TradeModal: React.FC<TradeModalProps> = ({
     }
   }, [editTrade, isOpen, defaultSelectedAccountName]);
 
-  // Recalculate PnL & R-Multiple dynamically
-  const recalculateMetrics = () => {
+  // Real-time calculation of theoretical R:R, planned risk, planned reward & invalidation alerts
+  const liveCalculations = useMemo(() => {
     const entry = Number(formData.entryPrice) || 0;
+    const sl = Number(formData.stopLoss) || 0;
+    const tp = Number(formData.takeProfit) || 0;
+    const qty = Number(formData.quantity) || 0;
+    const fees = Number(formData.fees) || 0;
     const exit = Number(formData.exitPrice) || 0;
+    const dir = formData.direction || 'LONG';
+
+    let riskPoints = 0;
+    let rewardPoints = 0;
+    let theoreticalRR = 0;
+    let plannedRiskAmount = 0;
+    let plannedRewardAmount = 0;
+    let isSlValid = true;
+    let isTpValid = true;
+    let warningMessage = '';
+
+    if (entry > 0) {
+      if (dir === 'LONG') {
+        if (sl > 0) {
+          if (sl >= entry) {
+            isSlValid = false;
+            warningMessage = "⚠️ En position Long (Achat), le Stop-Loss doit être STRICTEMENT inférieur au prix d'entrée.";
+          } else {
+            riskPoints = entry - sl;
+            plannedRiskAmount = Math.round(riskPoints * qty * 100) / 100;
+          }
+        }
+        if (tp > 0) {
+          if (tp <= entry) {
+            isTpValid = false;
+            if (!warningMessage) {
+              warningMessage = "⚠️ En position Long (Achat), le Take-Profit doit être STRICTEMENT supérieur au prix d'entrée.";
+            }
+          } else {
+            rewardPoints = tp - entry;
+            plannedRewardAmount = Math.round(rewardPoints * qty * 100) / 100;
+          }
+        }
+      } else {
+        // SHORT
+        if (sl > 0) {
+          if (sl <= entry) {
+            isSlValid = false;
+            warningMessage = "⚠️ En position Short (Vente), le Stop-Loss doit être STRICTEMENT supérieur au prix d'entrée.";
+          } else {
+            riskPoints = sl - entry;
+            plannedRiskAmount = Math.round(riskPoints * qty * 100) / 100;
+          }
+        }
+        if (tp > 0) {
+          if (tp >= entry) {
+            isTpValid = false;
+            if (!warningMessage) {
+              warningMessage = "⚠️ En position Short (Vente), le Take-Profit doit être STRICTEMENT inférieur au prix d'entrée.";
+            }
+          } else {
+            rewardPoints = entry - tp;
+            plannedRewardAmount = Math.round(rewardPoints * qty * 100) / 100;
+          }
+        }
+      }
+
+      if (riskPoints > 0 && rewardPoints > 0) {
+        theoreticalRR = Math.round((rewardPoints / riskPoints) * 100) / 100;
+      }
+    }
+
+    // Realized metrics (if exit is set)
+    let rawRealizedPnl = 0;
+    if (entry > 0 && exit > 0 && qty > 0) {
+      if (dir === 'LONG') {
+        rawRealizedPnl = (exit - entry) * qty;
+      } else {
+        rawRealizedPnl = (entry - exit) * qty;
+      }
+    }
+    const netRealizedPnl = Math.round((rawRealizedPnl - fees) * 100) / 100;
+    const realizedR = plannedRiskAmount > 0 
+      ? Math.round((rawRealizedPnl / plannedRiskAmount) * 100) / 100 
+      : 0;
+
+    return {
+      entry,
+      sl,
+      tp,
+      qty,
+      exit,
+      dir,
+      riskPoints: Math.round(riskPoints * 100) / 100,
+      rewardPoints: Math.round(rewardPoints * 100) / 100,
+      theoreticalRR,
+      plannedRiskAmount,
+      plannedRewardAmount,
+      isSlValid,
+      isTpValid,
+      warningMessage,
+      netRealizedPnl,
+      realizedR,
+    };
+  }, [formData.entryPrice, formData.stopLoss, formData.takeProfit, formData.quantity, formData.exitPrice, formData.fees, formData.direction]);
+
+  // Recalculate and update realized PnL in formData
+  const recalculateMetrics = () => {
+    const { plannedRiskAmount, netRealizedPnl, realizedR } = liveCalculations;
+    
+    let calculatedStatus: TradeStatus = formData.status || 'WIN';
+    if (netRealizedPnl > 5) calculatedStatus = 'WIN';
+    else if (netRealizedPnl < -5) calculatedStatus = 'LOSS';
+    else if (Math.abs(netRealizedPnl) <= 5) calculatedStatus = 'BE';
+
+    setFormData((prev) => ({
+      ...prev,
+      riskAmount: plannedRiskAmount || prev.riskAmount,
+      pnl: netRealizedPnl,
+      rMultiple: realizedR,
+      theoreticalRR: liveCalculations.theoreticalRR,
+      pnlPercentage: plannedRiskAmount > 0 ? Math.round((netRealizedPnl / plannedRiskAmount) * 100) / 100 : 0,
+      status: calculatedStatus,
+    }));
+  };
+
+  // Quick helper to apply TP / SL / BE to Exit Price
+  const applyPresetExitPrice = (target: 'TP' | 'SL' | 'BE') => {
+    const entry = Number(formData.entryPrice) || 0;
+    const tp = Number(formData.takeProfit) || 0;
     const sl = Number(formData.stopLoss) || 0;
     const qty = Number(formData.quantity) || 1;
     const fees = Number(formData.fees) || 0;
     const dir = formData.direction || 'LONG';
 
-    if (entry > 0 && sl > 0) {
-      const riskPerUnit = Math.abs(entry - sl);
-      const calculatedRiskAmount = riskPerUnit * qty;
-      
-      let rawPnl = 0;
-      if (dir === 'LONG') {
-        rawPnl = (exit - entry) * qty;
-      } else {
-        rawPnl = (entry - exit) * qty;
-      }
+    let newExit = entry;
+    let newStatus: TradeStatus = 'BE';
 
-      const netPnl = Math.round((rawPnl - fees) * 100) / 100;
-      const rMultiple = calculatedRiskAmount > 0 ? Math.round((rawPnl / calculatedRiskAmount) * 100) / 100 : 0;
-      const pnlPercentage = calculatedRiskAmount > 0 ? Math.round((netPnl / calculatedRiskAmount) * 100) / 100 : 0;
-
-      let calculatedStatus: TradeStatus = formData.status || 'WIN';
-      if (netPnl > 5) calculatedStatus = 'WIN';
-      else if (netPnl < -5) calculatedStatus = 'LOSS';
-      else if (Math.abs(netPnl) <= 5) calculatedStatus = 'BE';
-
-      setFormData((prev) => ({
-        ...prev,
-        riskAmount: calculatedRiskAmount,
-        pnl: netPnl,
-        rMultiple: rMultiple,
-        pnlPercentage: pnlPercentage,
-        status: calculatedStatus,
-      }));
+    if (target === 'TP' && tp > 0) {
+      newExit = tp;
+      newStatus = 'WIN';
+    } else if (target === 'SL' && sl > 0) {
+      newExit = sl;
+      newStatus = 'LOSS';
+    } else if (target === 'BE' && entry > 0) {
+      newExit = entry;
+      newStatus = 'BE';
     }
+
+    const rawPnl = dir === 'LONG' ? (newExit - entry) * qty : (entry - newExit) * qty;
+    const netPnl = Math.round((rawPnl - fees) * 100) / 100;
+    const riskAmt = liveCalculations.plannedRiskAmount || 1;
+    const rVal = riskAmt > 0 ? Math.round((rawPnl / riskAmt) * 100) / 100 : 0;
+
+    setFormData((prev) => ({
+      ...prev,
+      exitPrice: newExit,
+      status: newStatus,
+      pnl: netPnl,
+      rMultiple: rVal,
+      pnlPercentage: riskAmt > 0 ? Math.round((netPnl / riskAmt) * 100) / 100 : 0,
+      riskAmount: liveCalculations.plannedRiskAmount,
+    }));
+
+    triggerPasteNotification(`Sortie appliquée sur ${target} (${newExit})`);
   };
 
   // Direct Clipboard Paste handler (Ctrl+V / Cmd+V)
@@ -288,7 +400,6 @@ export const TradeModal: React.FC<TradeModalProps> = ({
             reader.onload = (e) => {
               const base64 = e.target?.result as string;
               if (base64) {
-                // Determine target: active Paste Target or default to Before, or if Before exists then After
                 const target = activePasteTarget || (!formData.screenshotBefore ? 'BEFORE' : 'AFTER');
                 
                 if (target === 'BEFORE') {
@@ -347,95 +458,71 @@ export const TradeModal: React.FC<TradeModalProps> = ({
     }
   };
 
-  const addCustomIndicator = () => {
-    if (!customIndicatorInput.trim()) return;
-    const current = formData.indicators || [];
-    if (!current.includes(customIndicatorInput.trim())) {
-      setFormData({ ...formData, indicators: [...current, customIndicatorInput.trim()] });
-    }
-    setCustomIndicatorInput('');
-  };
-
-  const toggleChartPattern = (pattern: string) => {
-    const current = formData.chartPatterns || [];
-    if (current.includes(pattern)) {
-      setFormData({ ...formData, chartPatterns: current.filter((p) => p !== pattern) });
-    } else {
-      setFormData({ ...formData, chartPatterns: [...current, pattern] });
-    }
-  };
-
-  const addCustomPattern = () => {
-    if (!customPatternInput.trim()) return;
-    const current = formData.chartPatterns || [];
-    if (!current.includes(customPatternInput.trim())) {
-      setFormData({ ...formData, chartPatterns: [...current, customPatternInput.trim()] });
-    }
-    setCustomPatternInput('');
-  };
-
-  const addSupportLevel = () => {
-    const val = parseFloat(supportInput);
-    if (!isNaN(val)) {
-      const current = formData.supportLevels || [];
-      if (!current.includes(val)) {
-        setFormData({ ...formData, supportLevels: [...current, val].sort((a, b) => a - b) });
-      }
-      setSupportInput('');
-    }
-  };
-
-  const removeSupportLevel = (lvl: number) => {
-    const current = formData.supportLevels || [];
-    setFormData({ ...formData, supportLevels: current.filter((l) => l !== lvl) });
-  };
-
-  const addResistanceLevel = () => {
-    const val = parseFloat(resistanceInput);
-    if (!isNaN(val)) {
-      const current = formData.resistanceLevels || [];
-      if (!current.includes(val)) {
-        setFormData({ ...formData, resistanceLevels: [...current, val].sort((a, b) => a - b) });
-      }
-      setResistanceInput('');
-    }
-  };
-
-  const removeResistanceLevel = (lvl: number) => {
-    const current = formData.resistanceLevels || [];
-    setFormData({ ...formData, resistanceLevels: current.filter((l) => l !== lvl) });
-  };
-
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
     const finalAccount = isCustomAccount ? customAccountInput.trim() || 'Compte Principal' : (formData.account || DEFAULT_ACCOUNTS[0]);
+    const pairValue = (formData.pair || 'BTC/USD').trim().toUpperCase();
+    const entryPrice = Number(formData.entryPrice) || 0;
+    const stopLoss = Number(formData.stopLoss) || 0;
+    const takeProfit = Number(formData.takeProfit) || 0;
+    const quantity = Number(formData.quantity) || 1;
+    const exitPrice = Number(formData.exitPrice) || takeProfit || entryPrice;
+    const fees = Number(formData.fees) || 0;
+    const direction = (formData.direction as Direction) || 'LONG';
+
+    // Calculate final PnL and risk
+    const riskAmt = liveCalculations.plannedRiskAmount > 0 
+      ? liveCalculations.plannedRiskAmount 
+      : Math.abs(entryPrice - stopLoss) * quantity;
+    
+    let rawPnl = direction === 'LONG' ? (exitPrice - entryPrice) * quantity : (entryPrice - exitPrice) * quantity;
+    const finalNetPnl = Math.round((rawPnl - fees) * 100) / 100;
+    const finalRMultiple = riskAmt > 0 ? Math.round((rawPnl / riskAmt) * 100) / 100 : 0;
+
+    let finalStatus: TradeStatus = formData.status || 'WIN';
+    if (finalNetPnl > 5) finalStatus = 'WIN';
+    else if (finalNetPnl < -5) finalStatus = 'LOSS';
+    else if (Math.abs(finalNetPnl) <= 5) finalStatus = 'BE';
+
+    // Infer asset class
+    let assetClass: AssetClass = 'CRYPTO';
+    if (['EUR/USD', 'GBP/USD', 'USD/JPY', 'GBP/JPY', 'AUD/USD', 'USD/CAD'].includes(pairValue)) {
+      assetClass = 'FOREX';
+    } else if (['NAS100', 'US30', 'SPX500', 'GER40', 'CAC40', 'DAX40'].includes(pairValue)) {
+      assetClass = 'INDICES';
+    } else if (['XAU/USD', 'WTI', 'BRENT', 'GOLD', 'SILVER'].includes(pairValue)) {
+      assetClass = 'COMMODITIES';
+    } else if (['NVDA', 'AAPL', 'TSLA', 'AMZN', 'MSFT', 'META'].includes(pairValue)) {
+      assetClass = 'STOCKS';
+    }
 
     const tradeToSave: Trade = {
       id: editTrade ? editTrade.id : `tr-${Date.now()}`,
       ticketNumber: editTrade?.ticketNumber || `#${Math.floor(1000 + Math.random() * 9000)}`,
       account: finalAccount,
-      pair: formData.pair || 'NAS100',
-      assetClass: (formData.assetClass as AssetClass) || 'INDICES',
-      direction: (formData.direction as Direction) || 'LONG',
-      status: (formData.status as TradeStatus) || 'WIN',
+      pair: pairValue,
+      assetClass: assetClass,
+      direction: direction,
+      status: finalStatus,
       entryDate: formData.entryDate || new Date().toISOString().split('T')[0],
       entryTime: formData.entryTime || '10:00',
       exitDate: formData.exitDate || formData.entryDate || new Date().toISOString().split('T')[0],
       exitTime: formData.exitTime || '11:00',
       session: (formData.session as TradingSession) || 'New York',
       timeframe: (formData.timeframe as Timeframe) || '5m',
-      entryPrice: Number(formData.entryPrice) || 0,
-      exitPrice: Number(formData.exitPrice) || 0,
-      stopLoss: Number(formData.stopLoss) || 0,
-      takeProfit: Number(formData.takeProfit) || 0,
-      quantity: Number(formData.quantity) || 1,
-      fees: Number(formData.fees) || 0,
-      riskAmount: Number(formData.riskAmount) || 0,
-      pnl: Number(formData.pnl) || 0,
-      pnlPercentage: Number(formData.pnlPercentage) || 0,
-      rMultiple: Number(formData.rMultiple) || 0,
-      strategy: '', // Removed setup/strategy as requested
+      entryPrice: entryPrice,
+      exitPrice: exitPrice,
+      stopLoss: stopLoss,
+      takeProfit: takeProfit,
+      quantity: quantity,
+      fees: fees,
+      riskAmount: riskAmt,
+      pnl: finalNetPnl,
+      pnlPercentage: riskAmt > 0 ? Math.round((finalNetPnl / riskAmt) * 100) / 100 : 0,
+      rMultiple: finalRMultiple,
+      theoreticalRR: liveCalculations.theoreticalRR,
+      strategy: '',
       mistakes: formData.mistakes || ['None - Followed Plan'],
       emotions: (formData.emotions as EmotionState) || 'DISCIPLINED',
       executionRating: Number(formData.executionRating) || 5,
@@ -468,8 +555,8 @@ export const TradeModal: React.FC<TradeModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-3 sm:p-4 overflow-y-auto">
-      <div className="relative w-full max-w-4xl rounded-2xl border border-zinc-800 bg-zinc-950 p-5 sm:p-6 shadow-2xl space-y-5 my-6 animate-in fade-in zoom-in-95 duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-3 sm:p-4 overflow-y-auto">
+      <div className="relative w-full max-w-4xl rounded-2xl border border-zinc-800 bg-zinc-950 p-4 sm:p-6 shadow-2xl space-y-5 my-6 animate-in fade-in zoom-in-95 duration-200">
         
         {/* Paste Notification Banner */}
         {pasteFeedback && (
@@ -484,15 +571,16 @@ export const TradeModal: React.FC<TradeModalProps> = ({
           <div>
             <h2 className="text-lg sm:text-xl font-bold text-white flex items-center gap-2">
               <Sparkles className="h-5 w-5 text-blue-400" />
-              {editTrade ? `Modifier Trade ${editTrade.ticketNumber}` : 'Ajouter un Trade'}
+              {editTrade ? `Modifier Trade ${editTrade.ticketNumber}` : 'Enregistrer une Position / Trade'}
             </h2>
-            <p className="text-xs text-zinc-400">
-              Enregistrement en base de données avec calculs instantanés et synchronisation du Dashboard
+            <p className="text-xs text-zinc-400 mt-0.5">
+              Formulaire de saisie avec calcul automatique en temps réel du Ratio Risque/Rendement (R:R).
             </p>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 text-zinc-400 hover:text-white rounded-lg hover:bg-zinc-900 transition-all"
+            className="p-2 text-zinc-400 hover:text-white rounded-xl hover:bg-zinc-900 transition-all min-h-[44px] min-w-[44px] flex items-center justify-center"
+            title="Fermer la fenêtre"
           >
             <X className="h-5 w-5" />
           </button>
@@ -501,57 +589,404 @@ export const TradeModal: React.FC<TradeModalProps> = ({
         {/* Form */}
         <form onSubmit={handleSubmit} className="space-y-5 text-xs">
           
-          {/* Section 1: Date, Heure, Instrument & Compte */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3.5">
-            {/* Instrument / Paire */}
+          {/* SECTION 1 : Sélecteur Strict Long / Short & Symbole Actif */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 rounded-2xl border border-blue-500/20 bg-blue-950/10">
+            
+            {/* 1. Sélecteur strict pour le Type de position : "Long" (Achat) ou "Short" (Vente) */}
             <div>
-              <label className="block text-zinc-300 font-medium mb-1 flex items-center gap-1">
-                <BarChart2 className="h-3.5 w-3.5 text-blue-400" />
-                Instrument (Actif) <span className="text-rose-400">*</span>
+              <label className="block text-zinc-200 font-bold mb-2 flex items-center justify-between">
+                <span className="flex items-center gap-1.5 text-sm">
+                  <Scale className="h-4 w-4 text-blue-400" />
+                  Type de Position <span className="text-rose-400">*</span>
+                </span>
+                <span className="text-[11px] font-mono font-normal text-zinc-400">
+                  {formData.direction === 'LONG' ? '🟢 Achat (Haussier)' : '🟣 Vente (Baissier)'}
+                </span>
               </label>
-              <div className="relative">
+              <div className="grid grid-cols-2 gap-2.5">
+                <button
+                  type="button"
+                  id="trade-position-type-long"
+                  onClick={() => setFormData({ ...formData, direction: 'LONG' })}
+                  className={`min-h-[48px] rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all active:scale-[0.98] ${
+                    formData.direction === 'LONG'
+                      ? 'bg-emerald-600 text-white ring-2 ring-emerald-400 shadow-lg shadow-emerald-500/25 font-black'
+                      : 'border border-zinc-800 bg-zinc-900/90 text-zinc-400 hover:text-white hover:border-zinc-700'
+                  }`}
+                >
+                  <ArrowUpRight className="h-5 w-5 text-emerald-300" />
+                  <span>Long (Achat)</span>
+                </button>
+
+                <button
+                  type="button"
+                  id="trade-position-type-short"
+                  onClick={() => setFormData({ ...formData, direction: 'SHORT' })}
+                  className={`min-h-[48px] rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all active:scale-[0.98] ${
+                    formData.direction === 'SHORT'
+                      ? 'bg-purple-600 text-white ring-2 ring-purple-400 shadow-lg shadow-purple-500/25 font-black'
+                      : 'border border-zinc-800 bg-zinc-900/90 text-zinc-400 hover:text-white hover:border-zinc-700'
+                  }`}
+                >
+                  <ArrowDownRight className="h-5 w-5 text-purple-300" />
+                  <span>Short (Vente)</span>
+                </button>
+              </div>
+            </div>
+
+            {/* 2. Champ pour le "Symbole / Actif" (ex: BTC/USD, EUR/USD) */}
+            <div>
+              <label className="block text-zinc-200 font-bold mb-2 flex items-center justify-between">
+                <span className="flex items-center gap-1.5 text-sm">
+                  <BarChart2 className="h-4 w-4 text-blue-400" />
+                  Symbole / Actif <span className="text-rose-400">*</span>
+                </span>
+                <span className="text-[11px] text-zinc-400 font-mono">Ex: BTC/USD, EUR/USD</span>
+              </label>
+              <div className="space-y-1.5">
                 <input
                   type="text"
                   required
+                  id="trade-symbol-input"
                   value={formData.pair}
                   onChange={(e) => setFormData({ ...formData, pair: e.target.value.toUpperCase() })}
                   list="pairs-datalist"
-                  placeholder="Ex: NAS100, EUR/USD, BTC"
-                  className="w-full rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-white font-mono font-bold placeholder-zinc-500 focus:border-blue-500 focus:outline-none"
+                  placeholder="Ex: BTC/USD, EUR/USD, NAS100..."
+                  className="min-h-[48px] w-full rounded-xl border border-zinc-800 bg-zinc-900 px-3.5 py-2 text-white font-mono font-bold text-sm sm:text-base placeholder-zinc-500 focus:border-blue-500 focus:outline-none"
                 />
                 <datalist id="pairs-datalist">
                   {COMMON_PAIRS.map((p) => (
                     <option key={p} value={p} />
                   ))}
                 </datalist>
+
+                {/* Quick Selection Pills for Mobile & Fast Entry */}
+                <div className="flex flex-wrap gap-1 pt-0.5">
+                  {['BTC/USD', 'ETH/USD', 'EUR/USD', 'GBP/USD', 'NAS100', 'US30', 'XAU/USD'].map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => setFormData({ ...formData, pair: preset })}
+                      className={`text-[10px] px-2 py-0.5 rounded-md font-mono transition-all ${
+                        formData.pair === preset
+                          ? 'bg-blue-600 text-white font-bold'
+                          : 'bg-zinc-800/80 text-zinc-400 hover:text-zinc-200'
+                      }`}
+                    >
+                      {preset}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
+          </div>
+
+          {/* SECTION 2 : Champs Numériques Obligatoires (Prix d'entrée, SL, TP, Taille) & Calculateur R:R Temps Réel */}
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4 sm:p-5 space-y-4">
+            
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-800 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 rounded-lg bg-blue-500/10 text-blue-400">
+                  <DollarSign className="h-4 w-4" />
+                </div>
+                <div>
+                  <h3 className="text-xs sm:text-sm font-bold text-white uppercase tracking-wider">
+                    Paramètres Numériques de la Position
+                  </h3>
+                  <p className="text-[11px] text-zinc-400">
+                    Entrez vos niveaux pour visualiser instantanément le ratio Risque/Rendement (R:R)
+                  </p>
+                </div>
+              </div>
+
+              {/* Quick Actions to set Exit Price */}
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] text-zinc-400 font-medium">Clôturer :</span>
+                <button
+                  type="button"
+                  onClick={() => applyPresetExitPrice('TP')}
+                  className="px-2.5 py-1 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/25 text-[11px] font-bold transition-all"
+                  title="Définir le prix de sortie égal au Take-Profit"
+                >
+                  Au TP
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applyPresetExitPrice('SL')}
+                  className="px-2.5 py-1 rounded-lg bg-rose-500/15 border border-rose-500/30 text-rose-300 hover:bg-rose-500/25 text-[11px] font-bold transition-all"
+                  title="Définir le prix de sortie égal au Stop-Loss"
+                >
+                  Au SL
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applyPresetExitPrice('BE')}
+                  className="px-2.5 py-1 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-300 hover:bg-amber-500/25 text-[11px] font-bold transition-all"
+                  title="Définir le prix de sortie égal au Prix d'entrée"
+                >
+                  Au BE
+                </button>
+              </div>
+            </div>
+
+            {/* Invalidation Alert if SL or TP is on the wrong side */}
+            {liveCalculations.warningMessage && (
+              <div className="rounded-xl border border-amber-500/40 bg-amber-950/30 p-3 flex items-start gap-2.5 text-amber-300 animate-in fade-in">
+                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-amber-400" />
+                <div className="text-xs font-medium">
+                  {liveCalculations.warningMessage}
+                </div>
+              </div>
+            )}
+
+            {/* 3. Des champs numériques pour : Prix d'entrée, Stop-Loss (SL), Take-Profit (TP), Taille de position */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3.5">
+              
+              {/* Prix d'Entrée */}
+              <div>
+                <label className="block text-zinc-300 font-semibold mb-1 flex items-center justify-between">
+                  <span>Prix d'Entrée <span className="text-rose-400">*</span></span>
+                  <span className="text-[10px] text-blue-400 font-mono font-normal">Niveau Entry</span>
+                </label>
+                <input
+                  type="number"
+                  step="any"
+                  required
+                  id="trade-entry-price"
+                  value={formData.entryPrice}
+                  onChange={(e) => setFormData({ ...formData, entryPrice: parseFloat(e.target.value) || 0 })}
+                  onBlur={recalculateMetrics}
+                  className="min-h-[44px] w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 font-mono text-white text-sm font-bold focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+
+              {/* Stop-Loss (SL) */}
+              <div>
+                <label className="block text-rose-300 font-semibold mb-1 flex items-center justify-between">
+                  <span className="flex items-center gap-1">
+                    <Shield className="h-3.5 w-3.5 text-rose-400" />
+                    Stop-Loss (SL) <span className="text-rose-400">*</span>
+                  </span>
+                  <span className="text-[10px] text-rose-400 font-mono font-normal">Invalidation</span>
+                </label>
+                <input
+                  type="number"
+                  step="any"
+                  required
+                  id="trade-stop-loss"
+                  value={formData.stopLoss}
+                  onChange={(e) => setFormData({ ...formData, stopLoss: parseFloat(e.target.value) || 0 })}
+                  onBlur={recalculateMetrics}
+                  className={`min-h-[44px] w-full rounded-xl border bg-zinc-950 px-3 py-2 font-mono text-rose-400 text-sm font-bold focus:outline-none ${
+                    !liveCalculations.isSlValid ? 'border-rose-500 ring-1 ring-rose-500' : 'border-zinc-800 focus:border-rose-500'
+                  }`}
+                />
+              </div>
+
+              {/* Take-Profit (TP) */}
+              <div>
+                <label className="block text-emerald-300 font-semibold mb-1 flex items-center justify-between">
+                  <span className="flex items-center gap-1">
+                    <Target className="h-3.5 w-3.5 text-emerald-400" />
+                    Take-Profit (TP) <span className="text-rose-400">*</span>
+                  </span>
+                  <span className="text-[10px] text-emerald-400 font-mono font-normal">Objectif</span>
+                </label>
+                <input
+                  type="number"
+                  step="any"
+                  required
+                  id="trade-take-profit"
+                  value={formData.takeProfit}
+                  onChange={(e) => setFormData({ ...formData, takeProfit: parseFloat(e.target.value) || 0 })}
+                  onBlur={recalculateMetrics}
+                  className={`min-h-[44px] w-full rounded-xl border bg-zinc-950 px-3 py-2 font-mono text-emerald-400 text-sm font-bold focus:outline-none ${
+                    !liveCalculations.isTpValid ? 'border-rose-500 ring-1 ring-rose-500' : 'border-zinc-800 focus:border-emerald-500'
+                  }`}
+                />
+              </div>
+
+              {/* Taille de Position (Lots / Unités) */}
+              <div>
+                <label className="block text-zinc-300 font-semibold mb-1 flex items-center justify-between">
+                  <span className="flex items-center gap-1">
+                    <Layers className="h-3.5 w-3.5 text-amber-400" />
+                    Taille Position <span className="text-rose-400">*</span>
+                  </span>
+                  <span className="text-[10px] text-amber-400 font-mono font-normal">Lots / Unités</span>
+                </label>
+                <input
+                  type="number"
+                  step="any"
+                  required
+                  id="trade-quantity"
+                  value={formData.quantity}
+                  onChange={(e) => setFormData({ ...formData, quantity: parseFloat(e.target.value) || 0 })}
+                  onBlur={recalculateMetrics}
+                  className="min-h-[44px] w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 font-mono text-white text-sm font-bold focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+
+            </div>
+
+            {/* 4. CALCUL AUTOMATIQUE EN TEMPS RÉEL DU RATIO RISQUE / RENDEMENT (R:R THÉORIQUE) */}
+            <div className="rounded-2xl border border-zinc-700/80 bg-zinc-950 p-4 shadow-xl space-y-3 font-mono">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-800/80 pb-2.5">
+                <span className="text-xs font-bold text-zinc-300 flex items-center gap-2">
+                  <Scale className="h-4 w-4 text-blue-400" />
+                  <span>Calcul Automatique en Temps Réel : Ratio Risque / Rendement</span>
+                </span>
+                <span className="text-[11px] text-zinc-400">
+                  Calculé instantanément avant validation
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                
+                {/* Badge Ratio R:R Théorique */}
+                <div className="rounded-xl border border-blue-500/30 bg-blue-950/25 p-3 flex flex-col justify-between">
+                  <span className="text-[10px] uppercase tracking-wider text-blue-300 font-semibold block">
+                    Ratio R:R Théorique
+                  </span>
+                  <div className="mt-1 flex items-baseline gap-1.5">
+                    <span className={`text-xl sm:text-2xl font-black ${
+                      liveCalculations.theoreticalRR >= 2 
+                        ? 'text-emerald-400' 
+                        : liveCalculations.theoreticalRR >= 1.5 
+                        ? 'text-blue-400' 
+                        : liveCalculations.theoreticalRR >= 1 
+                        ? 'text-amber-400' 
+                        : 'text-rose-400'
+                    }`}>
+                      {liveCalculations.theoreticalRR > 0 ? `1 : ${liveCalculations.theoreticalRR.toFixed(2)}` : 'N/A'}
+                    </span>
+                    {liveCalculations.theoreticalRR > 0 && (
+                      <span className="text-xs text-zinc-400">R</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Risque Théorique au SL */}
+                <div className="rounded-xl border border-rose-500/30 bg-rose-950/20 p-3 flex flex-col justify-between">
+                  <span className="text-[10px] uppercase tracking-wider text-rose-300 font-semibold block">
+                    Risque Max au SL
+                  </span>
+                  <div className="mt-1">
+                    <span className="text-lg sm:text-xl font-bold text-rose-400 block">
+                      {liveCalculations.plannedRiskAmount > 0 ? `-${formatCurrency(liveCalculations.plannedRiskAmount, currency)}` : '0.00'}
+                    </span>
+                    <span className="text-[10px] text-zinc-400 block">
+                      {liveCalculations.riskPoints > 0 ? `${liveCalculations.riskPoints} pts de distance` : ''}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Gain Théorique au TP */}
+                <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/20 p-3 flex flex-col justify-between">
+                  <span className="text-[10px] uppercase tracking-wider text-emerald-300 font-semibold block">
+                    Gain Potentiel au TP
+                  </span>
+                  <div className="mt-1">
+                    <span className="text-lg sm:text-xl font-bold text-emerald-400 block">
+                      {liveCalculations.plannedRewardAmount > 0 ? `+${formatCurrency(liveCalculations.plannedRewardAmount, currency)}` : '0.00'}
+                    </span>
+                    <span className="text-[10px] text-zinc-400 block">
+                      {liveCalculations.rewardPoints > 0 ? `${liveCalculations.rewardPoints} pts d'objectif` : ''}
+                    </span>
+                  </div>
+                </div>
+
+                {/* P&L Réalisé (Selon Prix de Sortie) */}
+                <div className="rounded-xl border border-zinc-800 bg-zinc-900/80 p-3 flex flex-col justify-between">
+                  <span className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold block">
+                    P&L Net Réalisé
+                  </span>
+                  <div className="mt-1">
+                    <span className={`text-lg sm:text-xl font-bold block ${
+                      liveCalculations.netRealizedPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                    }`}>
+                      {formatCurrency(liveCalculations.netRealizedPnl, currency, true)}
+                    </span>
+                    <span className="text-[10px] text-blue-400 block">
+                      {formatRMultiple(liveCalculations.realizedR)}
+                    </span>
+                  </div>
+                </div>
+
+              </div>
+
+              {/* Extra row for Exit Price & Fees */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-zinc-800/80">
+                <div>
+                  <label className="block text-zinc-400 text-[11px] mb-1">Prix de Sortie Réalisé</label>
+                  <input
+                    type="number"
+                    step="any"
+                    value={formData.exitPrice}
+                    onChange={(e) => setFormData({ ...formData, exitPrice: parseFloat(e.target.value) || 0 })}
+                    onBlur={recalculateMetrics}
+                    className="min-h-[38px] w-full rounded-lg border border-zinc-800 bg-zinc-900 px-2.5 py-1 text-white font-mono text-xs focus:border-blue-500 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-zinc-400 text-[11px] mb-1">Frais / Comm. ({currency})</label>
+                  <input
+                    type="number"
+                    step="any"
+                    value={formData.fees}
+                    onChange={(e) => setFormData({ ...formData, fees: parseFloat(e.target.value) || 0 })}
+                    onBlur={recalculateMetrics}
+                    className="min-h-[38px] w-full rounded-lg border border-zinc-800 bg-zinc-900 px-2.5 py-1 text-zinc-300 font-mono text-xs focus:border-blue-500 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-zinc-400 text-[11px] mb-1">Statut Résultat</label>
+                  <select
+                    value={formData.status}
+                    onChange={(e) => setFormData({ ...formData, status: e.target.value as TradeStatus })}
+                    className="min-h-[38px] w-full rounded-lg border border-zinc-800 bg-zinc-900 px-2.5 py-1 text-zinc-200 font-mono text-xs focus:border-blue-500 focus:outline-none font-bold"
+                  >
+                    <option value="WIN">🟢 WIN (Gagnant)</option>
+                    <option value="LOSS">🔴 LOSS (Perdant)</option>
+                    <option value="BE">🟡 BE (Break-Even)</option>
+                    <option value="OPEN">🔵 OPEN (En cours)</option>
+                  </select>
+                </div>
+              </div>
+
+            </div>
+
+          </div>
+
+          {/* SECTION 3 : Date, Heure, Compte & Session */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3.5">
+            
             {/* Compte Sélectionné */}
             <div>
               <label className="block text-zinc-300 font-medium mb-1 flex items-center gap-1">
                 <Briefcase className="h-3.5 w-3.5 text-emerald-400" />
-                Compte Sélectionné <span className="text-rose-400">*</span>
+                Compte <span className="text-rose-400">*</span>
               </label>
               {!isCustomAccount ? (
-                <div className="flex gap-1.5">
-                  <select
-                    value={formData.account}
-                    onChange={(e) => {
-                      if (e.target.value === '__CUSTOM__') {
-                        setIsCustomAccount(true);
-                      } else {
-                        setFormData({ ...formData, account: e.target.value });
-                      }
-                    }}
-                    className="w-full rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-zinc-200 font-medium focus:border-blue-500 focus:outline-none"
-                  >
-                    {availableAccountNames.map((acc) => (
-                      <option key={acc} value={acc}>{acc}</option>
-                    ))}
-                    <option value="__CUSTOM__">+ Nouveau compte...</option>
-                  </select>
-                </div>
+                <select
+                  value={formData.account}
+                  onChange={(e) => {
+                    if (e.target.value === '__CUSTOM__') {
+                      setIsCustomAccount(true);
+                    } else {
+                      setFormData({ ...formData, account: e.target.value });
+                    }
+                  }}
+                  className="min-h-[42px] w-full rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-zinc-200 font-medium focus:border-blue-500 focus:outline-none"
+                >
+                  {availableAccountNames.map((acc) => (
+                    <option key={acc} value={acc}>{acc}</option>
+                  ))}
+                  <option value="__CUSTOM__">+ Nouveau compte...</option>
+                </select>
               ) : (
                 <div className="flex gap-1.5">
                   <input
@@ -560,12 +995,12 @@ export const TradeModal: React.FC<TradeModalProps> = ({
                     value={customAccountInput}
                     onChange={(e) => setCustomAccountInput(e.target.value)}
                     placeholder="Nom du compte..."
-                    className="w-full rounded-xl border border-blue-500/50 bg-zinc-900 px-3 py-2 text-white font-medium focus:outline-none"
+                    className="min-h-[42px] w-full rounded-xl border border-blue-500/50 bg-zinc-900 px-3 py-2 text-white font-medium focus:outline-none"
                   />
                   <button
                     type="button"
                     onClick={() => setIsCustomAccount(false)}
-                    className="px-2 rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-400 hover:text-white"
+                    className="px-2.5 rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-400 hover:text-white"
                   >
                     ×
                   </button>
@@ -573,7 +1008,25 @@ export const TradeModal: React.FC<TradeModalProps> = ({
               )}
             </div>
 
-            {/* Date d'Exécution */}
+            {/* Session de Trading */}
+            <div>
+              <label className="block text-zinc-300 font-medium mb-1 flex items-center gap-1">
+                <Globe className="h-3.5 w-3.5 text-blue-400" />
+                Session <span className="text-rose-400">*</span>
+              </label>
+              <select
+                value={formData.session}
+                onChange={(e) => setFormData({ ...formData, session: e.target.value as TradingSession })}
+                className="min-h-[42px] w-full rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-zinc-200 font-medium focus:border-blue-500 focus:outline-none"
+              >
+                <option value="London">Londres</option>
+                <option value="New York">New York</option>
+                <option value="Asian">Asiatique</option>
+                <option value="Overlap">Overlap</option>
+              </select>
+            </div>
+
+            {/* Date */}
             <div>
               <label className="block text-zinc-300 font-medium mb-1 flex items-center gap-1">
                 <Calendar className="h-3.5 w-3.5 text-blue-400" />
@@ -584,11 +1037,11 @@ export const TradeModal: React.FC<TradeModalProps> = ({
                 required
                 value={formData.entryDate}
                 onChange={(e) => setFormData({ ...formData, entryDate: e.target.value, exitDate: e.target.value })}
-                className="w-full rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-zinc-200 font-mono focus:border-blue-500 focus:outline-none"
+                className="min-h-[42px] w-full rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-zinc-200 font-mono focus:border-blue-500 focus:outline-none"
               />
             </div>
 
-            {/* Heure d'Exécution */}
+            {/* Heure */}
             <div>
               <label className="block text-zinc-300 font-medium mb-1 flex items-center gap-1">
                 <Clock className="h-3.5 w-3.5 text-amber-400" />
@@ -599,257 +1052,14 @@ export const TradeModal: React.FC<TradeModalProps> = ({
                 required
                 value={formData.entryTime}
                 onChange={(e) => setFormData({ ...formData, entryTime: e.target.value, exitTime: e.target.value })}
-                className="w-full rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-zinc-200 font-mono focus:border-blue-500 focus:outline-none"
+                className="min-h-[42px] w-full rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-zinc-200 font-mono focus:border-blue-500 focus:outline-none"
               />
             </div>
+
           </div>
 
-          {/* Section 2: Session (Londres, New York ou ASIATIQUE) & Direction */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
-            {/* Session - Explicitly Londres, New York, ASIATIQUE */}
-            <div>
-              <label className="block text-zinc-300 font-medium mb-1 flex items-center gap-1">
-                <Globe className="h-3.5 w-3.5 text-blue-400" />
-                Session de Trading <span className="text-rose-400">*</span>
-              </label>
-              <div className="grid grid-cols-3 gap-1.5">
-                {[
-                  { id: 'London', label: 'Londres' },
-                  { id: 'New York', label: 'New York' },
-                  { id: 'Asian', label: 'ASIATIQUE' },
-                ].map((s) => {
-                  const isSelected = formData.session === s.id;
-                  return (
-                    <button
-                      key={s.id}
-                      type="button"
-                      onClick={() => setFormData({ ...formData, session: s.id as TradingSession })}
-                      className={`rounded-xl py-2 px-1 text-center font-medium transition-all ${
-                        isSelected
-                          ? 'border-blue-500 bg-blue-600/30 text-blue-300 border font-bold shadow-sm'
-                          : 'border border-zinc-800 bg-zinc-900 text-zinc-400 hover:text-zinc-200 hover:border-zinc-700'
-                      }`}
-                    >
-                      {s.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Direction */}
-            <div>
-              <label className="block text-zinc-300 font-medium mb-1">Direction</label>
-              <div className="grid grid-cols-2 gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => setFormData({ ...formData, direction: 'LONG' })}
-                  className={`rounded-xl py-2 font-mono font-bold transition-all ${
-                    formData.direction === 'LONG'
-                      ? 'bg-blue-600 text-white ring-2 ring-blue-400 shadow-md shadow-blue-500/20'
-                      : 'border border-zinc-800 bg-zinc-900 text-zinc-400 hover:text-white'
-                  }`}
-                >
-                  LONG ↗
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setFormData({ ...formData, direction: 'SHORT' })}
-                  className={`rounded-xl py-2 font-mono font-bold transition-all ${
-                    formData.direction === 'SHORT'
-                      ? 'bg-purple-600 text-white ring-2 ring-purple-400 shadow-md shadow-purple-500/20'
-                      : 'border border-zinc-800 bg-zinc-900 text-zinc-400 hover:text-white'
-                  }`}
-                >
-                  SHORT ↘
-                </button>
-              </div>
-            </div>
-
-            {/* Résultat (TP / SL / BE / OPEN) */}
-            <div>
-              <label className="block text-zinc-300 font-medium mb-1">
-                Résultat / Sortie <span className="text-rose-400">*</span>
-              </label>
-              <div className="grid grid-cols-3 gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setFormData((prev) => ({ ...prev, status: 'WIN' }));
-                  }}
-                  className={`rounded-xl py-2 font-mono font-bold transition-all ${
-                    formData.status === 'WIN'
-                      ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-500 shadow-sm'
-                      : 'border border-zinc-800 bg-zinc-900 text-zinc-400 hover:text-white'
-                  }`}
-                >
-                  TP (Win)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setFormData((prev) => ({ ...prev, status: 'LOSS' }));
-                  }}
-                  className={`rounded-xl py-2 font-mono font-bold transition-all ${
-                    formData.status === 'LOSS'
-                      ? 'bg-rose-600/30 text-rose-300 border border-rose-500 shadow-sm'
-                      : 'border border-zinc-800 bg-zinc-900 text-zinc-400 hover:text-white'
-                  }`}
-                >
-                  SL (Perte)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setFormData((prev) => ({ ...prev, status: 'BE' }));
-                  }}
-                  className={`rounded-xl py-2 font-mono font-bold transition-all ${
-                    formData.status === 'BE'
-                      ? 'bg-amber-600/30 text-amber-300 border border-amber-500 shadow-sm'
-                      : 'border border-zinc-800 bg-zinc-900 text-zinc-400 hover:text-white'
-                  }`}
-                >
-                  BE (Neutre)
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* Section 3: Données Numériques & Calculateur PnL / R-Multiple */}
-          <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/40 p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-zinc-300 font-semibold uppercase tracking-wider text-[11px] flex items-center gap-1.5">
-                <DollarSign className="h-3.5 w-3.5 text-blue-400" />
-                Coordonnées de Prix & Résultat (R-Multiple)
-              </span>
-              <button
-                type="button"
-                onClick={recalculateMetrics}
-                className="text-[11px] text-blue-400 hover:underline flex items-center gap-1 font-medium"
-              >
-                ⚡ Recalculer P&L & R
-              </button>
-            </div>
-
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3">
-              <div>
-                <label className="block text-zinc-400 mb-1">Prix d'Entrée</label>
-                <input
-                  type="number"
-                  step="any"
-                  required
-                  value={formData.entryPrice}
-                  onChange={(e) => setFormData({ ...formData, entryPrice: parseFloat(e.target.value) || 0 })}
-                  onBlur={recalculateMetrics}
-                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-2.5 py-1.5 font-mono text-white focus:border-blue-500 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-zinc-400 mb-1">Prix de Sortie</label>
-                <input
-                  type="number"
-                  step="any"
-                  required
-                  value={formData.exitPrice}
-                  onChange={(e) => setFormData({ ...formData, exitPrice: parseFloat(e.target.value) || 0 })}
-                  onBlur={recalculateMetrics}
-                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-2.5 py-1.5 font-mono text-white focus:border-blue-500 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-zinc-400 mb-1">Stop Loss (SL)</label>
-                <input
-                  type="number"
-                  step="any"
-                  required
-                  value={formData.stopLoss}
-                  onChange={(e) => setFormData({ ...formData, stopLoss: parseFloat(e.target.value) || 0 })}
-                  onBlur={recalculateMetrics}
-                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-2.5 py-1.5 font-mono text-rose-400 focus:border-rose-500 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-zinc-400 mb-1">Take Profit (TP)</label>
-                <input
-                  type="number"
-                  step="any"
-                  value={formData.takeProfit}
-                  onChange={(e) => setFormData({ ...formData, takeProfit: parseFloat(e.target.value) || 0 })}
-                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-2.5 py-1.5 font-mono text-emerald-400 focus:border-emerald-500 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-zinc-400 mb-1">Quantité / Lots</label>
-                <input
-                  type="number"
-                  step="any"
-                  required
-                  value={formData.quantity}
-                  onChange={(e) => setFormData({ ...formData, quantity: parseFloat(e.target.value) || 0 })}
-                  onBlur={recalculateMetrics}
-                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-2.5 py-1.5 font-mono text-white focus:border-blue-500 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-zinc-400 mb-1">Frais / Comm. ({currency})</label>
-                <input
-                  type="number"
-                  step="any"
-                  value={formData.fees}
-                  onChange={(e) => setFormData({ ...formData, fees: parseFloat(e.target.value) || 0 })}
-                  onBlur={recalculateMetrics}
-                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-2.5 py-1.5 font-mono text-zinc-300 focus:border-blue-500 focus:outline-none"
-                />
-              </div>
-            </div>
-
-            {/* Calculated Preview Strip (R-Multiple & PnL) */}
-            <div className="mt-2 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-zinc-950 p-3.5 border border-zinc-800 font-mono shadow-inner">
-              <div>
-                <span className="text-zinc-400 text-[10px] uppercase block">Risque Prévu</span>
-                <span className="text-zinc-200 font-bold text-sm">{formatCurrency(formData.riskAmount || 0, currency)}</span>
-              </div>
-              <div>
-                <span className="text-zinc-400 text-[10px] uppercase block">P&L Net Calculé</span>
-                <span className={`text-base font-bold ${
-                  (formData.pnl || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'
-                }`}>
-                  {formatCurrency(formData.pnl || 0, currency, true)}
-                </span>
-              </div>
-              <div>
-                <span className="text-zinc-400 text-[10px] uppercase block">R-Multiple Réalisé</span>
-                <span className={`font-bold text-lg ${
-                  (formData.rMultiple || 0) >= 0 ? 'text-blue-400' : 'text-rose-400'
-                }`}>
-                  {formatRMultiple(formData.rMultiple || 0)}
-                </span>
-              </div>
-              <div>
-                <span className="text-zinc-400 text-[10px] uppercase block">Timeframe</span>
-                <select
-                  value={formData.timeframe}
-                  onChange={(e) => setFormData({ ...formData, timeframe: e.target.value as any })}
-                  className="bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:outline-none"
-                >
-                  <option value="1m">1m</option>
-                  <option value="5m">5m</option>
-                  <option value="15m">15m</option>
-                  <option value="1H">1H</option>
-                  <option value="4H">4H</option>
-                  <option value="Daily">Daily</option>
-                </select>
-              </div>
-            </div>
-          </div>
-
-          {/* Section 4: Captures Avant & Après (Support Copier-Coller Direct Ctrl+V / Cmd+V) */}
-          <div className="rounded-xl border border-blue-500/30 bg-blue-950/10 p-4 space-y-3">
+          {/* SECTION 4 : Captures Graphiques Avant / Après (Ctrl+V supporté) */}
+          <div className="rounded-xl border border-blue-500/20 bg-blue-950/10 p-4 space-y-3">
             <div className="flex items-center justify-between border-b border-zinc-800/80 pb-2">
               <div className="flex items-center gap-2">
                 <ImageIcon className="h-4 w-4 text-blue-400" />
@@ -859,7 +1069,7 @@ export const TradeModal: React.FC<TradeModalProps> = ({
               </div>
               <span className="text-[11px] text-blue-300/80 bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded-md flex items-center gap-1 font-mono">
                 <ClipboardPaste className="h-3 w-3" />
-                Copier-Coller direct actif (Ctrl+V / Cmd+V)
+                Coller direct actif (Ctrl+V)
               </span>
             </div>
 
@@ -946,7 +1156,7 @@ export const TradeModal: React.FC<TradeModalProps> = ({
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-xs font-bold text-emerald-300 flex items-center gap-1.5">
                     <span className="h-2 w-2 rounded-full bg-emerald-400"></span>
-                    Capture "Après Trade" (Résultat / Sortie)
+                    Capture "Après Trade" (Sortie / Résultat)
                   </span>
                   {formData.screenshotAfter && (
                     <button
@@ -1004,91 +1214,75 @@ export const TradeModal: React.FC<TradeModalProps> = ({
             </div>
           </div>
 
-          {/* Section 5: Analyse Technique (Indicateurs & Confluences Optionnelles) */}
-          <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/40 p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-zinc-300 font-semibold uppercase tracking-wider text-[11px] flex items-center gap-1.5">
-                <Activity className="h-3.5 w-3.5 text-blue-400" />
-                Confluences & Indicateurs Utilisés
-              </span>
-            </div>
-
-            <div className="flex flex-wrap gap-1.5">
-              {POPULAR_INDICATORS.map((ind) => {
-                const isSelected = formData.indicators?.includes(ind);
-                return (
-                  <button
-                    key={ind}
-                    type="button"
-                    onClick={() => toggleIndicator(ind)}
-                    className={`text-xs px-2.5 py-1 rounded-lg border font-medium transition-all ${
-                      isSelected
-                        ? 'border-blue-500/60 bg-blue-500/20 text-blue-300'
-                        : 'border-zinc-800 bg-zinc-950 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200'
-                    }`}
-                  >
-                    {isSelected ? '✓ ' : '+ '}{ind}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Section 6: Notes & Psychologie */}
+          {/* SECTION 5 : Indicateurs & Psychologie */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
             <div>
-              <label className="block text-zinc-400 font-medium mb-1">État Émotionnel</label>
+              <label className="block text-zinc-400 font-medium mb-1 flex items-center gap-1">
+                <Activity className="h-3.5 w-3.5 text-blue-400" />
+                Indicateurs Clés
+              </label>
+              <div className="flex flex-wrap gap-1">
+                {POPULAR_INDICATORS.slice(0, 8).map((ind) => {
+                  const isSelected = formData.indicators?.includes(ind);
+                  return (
+                    <button
+                      key={ind}
+                      type="button"
+                      onClick={() => toggleIndicator(ind)}
+                      className={`text-[11px] px-2 py-0.5 rounded-md border font-medium transition-all ${
+                        isSelected
+                          ? 'border-blue-500 bg-blue-500/20 text-blue-300 font-bold'
+                          : 'border-zinc-800 bg-zinc-950 text-zinc-400 hover:border-zinc-700'
+                      }`}
+                    >
+                      {isSelected ? '✓ ' : '+ '}{ind}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-zinc-400 font-medium mb-1">Discipline & Psychologie</label>
               <select
                 value={formData.emotions}
                 onChange={(e) => setFormData({ ...formData, emotions: e.target.value as any })}
-                className="w-full rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-zinc-200 focus:border-blue-500 focus:outline-none font-mono"
+                className="min-h-[42px] w-full rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-zinc-200 focus:border-blue-500 focus:outline-none font-mono"
               >
-                <option value="DISCIPLINED">🟢 DISCIPLINED (Plan suivi)</option>
-                <option value="CALM">🔵 CALM (Serein)</option>
-                <option value="ANXIOUS">🟡 ANXIOUS (Hésitant / Stressé)</option>
-                <option value="GREEDY">🟠 GREEDY (Gourmand)</option>
-                <option value="REVENGE">🔴 REVENGE (Vengeance)</option>
-                <option value="FATIGUED">🟣 FATIGUED (Fatigue)</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-zinc-400 font-medium mb-1">Erreur Notée (Le cas échéant)</label>
-              <select
-                value={formData.mistakes?.[0] || 'None - Followed Plan'}
-                onChange={(e) => setFormData({ ...formData, mistakes: [e.target.value] })}
-                className="w-full rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-zinc-200 focus:border-blue-500 focus:outline-none"
-              >
-                {MISTAKES_OPTIONS.map((m) => (
-                  <option key={m} value={m}>{m}</option>
-                ))}
+                <option value="DISCIPLINED">🟢 DISCIPLINED (Plan respecté à 100%)</option>
+                <option value="CALM">🔵 CALM (Serein & Lucide)</option>
+                <option value="ANXIOUS">🟡 ANXIOUS (Stressé / Précipité)</option>
+                <option value="GREEDY">🟠 GREEDY (Gourmand / Trop levier)</option>
+                <option value="REVENGE">🔴 REVENGE (Trade de vengeance)</option>
+                <option value="FATIGUED">🟣 FATIGUED (Fatigue session)</option>
               </select>
             </div>
 
             <div className="sm:col-span-2">
-              <label className="block text-zinc-400 font-medium mb-1">Notes du Trade</label>
+              <label className="block text-zinc-400 font-medium mb-1">Notes & Débriefing de la position</label>
               <textarea
                 rows={2}
                 value={formData.notes}
                 onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                placeholder="Raison de la prise de position, contexte et observations..."
+                placeholder="Raison d'entrée, contexte technique, confluences et ressenti..."
                 className="w-full rounded-xl border border-zinc-800 bg-zinc-900 p-2.5 text-zinc-200 placeholder-zinc-500 focus:border-blue-500 focus:outline-none resize-none"
               />
             </div>
           </div>
 
-          {/* Footer Actions (Thumb-Friendly on Mobile) */}
+          {/* Boutons d'Action (Thumb-Friendly) */}
           <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-end gap-2.5 sm:gap-3 border-t border-zinc-800 pt-4">
             <button
               type="button"
               onClick={onClose}
-              className="min-h-[44px] rounded-xl border border-zinc-800 bg-zinc-900 px-5 py-2.5 text-xs sm:text-sm text-zinc-300 hover:text-white font-semibold transition-all active:scale-[0.98]"
+              className="min-h-[48px] rounded-xl border border-zinc-800 bg-zinc-900 px-5 py-2.5 text-xs sm:text-sm text-zinc-300 hover:text-white font-semibold transition-all active:scale-[0.98]"
             >
               Annuler
             </button>
             <button
               type="submit"
-              className="min-h-[44px] flex items-center justify-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-500 px-6 py-2.5 text-xs sm:text-sm font-bold text-white shadow-lg shadow-blue-600/30 hover:shadow-blue-500/40 active:scale-[0.98] transition-all"
+              id="submit-trade-button"
+              className="min-h-[48px] flex items-center justify-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-500 px-6 py-2.5 text-xs sm:text-sm font-bold text-white shadow-lg shadow-blue-600/30 hover:shadow-blue-500/40 active:scale-[0.98] transition-all"
             >
               <Save className="h-4 w-4" />
               <span>{editTrade ? 'Mettre à jour le Trade' : 'Enregistrer le Trade'}</span>

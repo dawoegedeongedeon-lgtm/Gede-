@@ -32,6 +32,7 @@ export interface Trade {
   pnl: number;        // Net PnL in $
   pnlPercentage: number; // PnL in %
   rMultiple: number;  // e.g. +2.5R, -1.0R, 0.0R
+  theoreticalRR?: number; // Ratio R:R Théorique (ex: 2.5 pour 1:2.5)
   
   strategy?: string;
   mistakes: string[];

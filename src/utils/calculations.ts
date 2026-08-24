@@ -266,7 +266,10 @@ export function generateEquityCurveData(trades: Trade[], initialBalance: number 
     {
       tradeIndex: 0,
       date: sorted[0]?.entryDate || 'Départ',
-      ticket: 'Start',
+      time: '',
+      ticket: 'Départ',
+      pair: 'Initial',
+      direction: '',
       balance: initialBalance,
       pnl: 0,
       cumulativePnl: 0,
@@ -285,7 +288,10 @@ export function generateEquityCurveData(trades: Trade[], initialBalance: number 
     curve.push({
       tradeIndex: idx + 1,
       date: t.entryDate,
+      time: t.entryTime || '',
       ticket: t.ticketNumber || `#${idx + 1}`,
+      pair: t.pair || 'N/A',
+      direction: t.direction || 'LONG',
       balance: Math.round(runningBalance * 100) / 100,
       pnl: pnl,
       cumulativePnl: Math.round(runningPnl * 100) / 100,
