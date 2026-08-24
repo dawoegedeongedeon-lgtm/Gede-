@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { SessionRecord } from '../types';
-import { getDb } from '../../db/postgres';
+import { prisma } from '../../db/client';
 
 export interface ISessionRepository {
   create(userId: string, ttlDays?: number, meta?: { ip?: string; userAgent?: string }): Promise<SessionRecord>;
@@ -11,18 +11,18 @@ export interface ISessionRepository {
   count(): Promise<number>;
 }
 
-function mapRowToSession(r: any): SessionRecord {
+function mapPrismaSession(s: any): SessionRecord {
   return {
-    id: r.id,
-    userId: r.user_id,
-    createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at || new Date().toISOString()),
-    expiresAt: r.expires_at instanceof Date ? r.expires_at.toISOString() : String(r.expires_at),
-    ip: r.ip ?? undefined,
-    userAgent: r.user_agent ?? undefined,
+    id: s.id,
+    userId: s.userId,
+    createdAt: s.createdAt instanceof Date ? s.createdAt.toISOString() : String(s.createdAt || new Date().toISOString()),
+    expiresAt: s.expiresAt instanceof Date ? s.expiresAt.toISOString() : String(s.expiresAt),
+    ip: s.ip ?? undefined,
+    userAgent: s.userAgent ?? undefined,
   };
 }
 
-export class PostgresSessionRepository implements ISessionRepository {
+export class PrismaSessionRepository implements ISessionRepository {
   private hashToken(token: string): string {
     return crypto.createHash('sha256').update(token).digest('hex');
   }
@@ -37,46 +37,40 @@ export class PostgresSessionRepository implements ISessionRepository {
     const now = new Date();
     const expiresAt = new Date(now.getTime() + ttlDays * 24 * 60 * 60 * 1000);
 
-    const db = await getDb();
-    const sql = `
-      INSERT INTO sessions (id, user_id, token_hash, ip, user_agent, expires_at, created_at, updated_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-      RETURNING *
-    `;
+    const session = await prisma.session.create({
+      data: {
+        id: rawSessionId,
+        userId,
+        tokenHash,
+        ip: meta?.ip || null,
+        userAgent: meta?.userAgent || null,
+        expiresAt,
+      },
+    });
 
-    const res = await db.query(sql, [
-      rawSessionId,
-      userId,
-      tokenHash,
-      meta?.ip || null,
-      meta?.userAgent || null,
-      expiresAt,
-      now,
-      now,
-    ]);
-
-    return mapRowToSession(res.rows[0]);
+    return mapPrismaSession(session);
   }
 
   public async findById(sessionId: string): Promise<SessionRecord | null> {
     if (!sessionId || typeof sessionId !== 'string') return null;
 
     try {
-      const db = await getDb();
-      const res = await db.query('SELECT * FROM sessions WHERE id = $1 LIMIT 1', [sessionId]);
-      if (res.rows.length === 0) return null;
+      const session = await prisma.session.findUnique({
+        where: { id: sessionId },
+      });
+      if (!session) return null;
 
-      const session = mapRowToSession(res.rows[0]);
+      const record = mapPrismaSession(session);
 
       // Verify expiration
-      if (new Date(session.expiresAt).getTime() < Date.now()) {
+      if (new Date(record.expiresAt).getTime() < Date.now()) {
         await this.delete(sessionId);
         return null;
       }
 
-      return session;
+      return record;
     } catch (err: any) {
-      console.error('[PostgresSessionRepository.findById Error]:', err.message);
+      console.error('[PrismaSessionRepository.findById Error]:', err.message);
       return null;
     }
   }
@@ -84,44 +78,46 @@ export class PostgresSessionRepository implements ISessionRepository {
   public async delete(sessionId: string): Promise<boolean> {
     if (!sessionId) return false;
     try {
-      const db = await getDb();
-      const res = await db.query('DELETE FROM sessions WHERE id = $1', [sessionId]);
-      return res.rowCount > 0;
+      await prisma.session.delete({
+        where: { id: sessionId },
+      });
+      return true;
     } catch (err: any) {
-      console.error('[PostgresSessionRepository.delete Error]:', err.message);
+      console.error('[PrismaSessionRepository.delete Error]:', err.message);
       return false;
     }
   }
 
   public async deleteByUserId(userId: string): Promise<number> {
     try {
-      const db = await getDb();
-      const res = await db.query('DELETE FROM sessions WHERE user_id = $1', [userId]);
-      return res.rowCount;
+      const res = await prisma.session.deleteMany({
+        where: { userId },
+      });
+      return res.count;
     } catch (err: any) {
-      console.error('[PostgresSessionRepository.deleteByUserId Error]:', err.message);
+      console.error('[PrismaSessionRepository.deleteByUserId Error]:', err.message);
       return 0;
     }
   }
 
   public async cleanExpired(): Promise<void> {
     try {
-      const db = await getDb();
-      await db.query('DELETE FROM sessions WHERE expires_at < NOW()');
+      await prisma.session.deleteMany({
+        where: { expiresAt: { lt: new Date() } },
+      });
     } catch (err: any) {
-      console.error('[PostgresSessionRepository.cleanExpired Error]:', err.message);
+      console.error('[PrismaSessionRepository.cleanExpired Error]:', err.message);
     }
   }
 
   public async count(): Promise<number> {
     try {
-      const db = await getDb();
-      const res = await db.query('SELECT COUNT(*)::int as total FROM sessions');
-      return res.rows.length > 0 ? Number(res.rows[0].total) : 0;
+      return await prisma.session.count();
     } catch (err: any) {
       return 0;
     }
   }
 }
 
-export const sessionRepository: ISessionRepository = new PostgresSessionRepository();
+export const sessionRepository: ISessionRepository = new PrismaSessionRepository();
+

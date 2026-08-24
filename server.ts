@@ -8,7 +8,7 @@ import dotenv from 'dotenv';
 import { authRouter } from './src/server/auth/routes/auth.routes';
 import { tradingRouter } from './src/server/trading/routes/trading.routes';
 import { authService } from './src/server/auth/services/auth.service';
-import { getDb, dbManager } from './src/server/db/postgres';
+import { checkDatabaseConnection } from './src/server/db/client';
 import { runJsonToPostgresMigration } from './scripts/migrate-json-to-postgres';
 
 dotenv.config();
@@ -33,10 +33,14 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  // Initialize PostgreSQL database & schema
+  // Initialize PostgreSQL database & verify connection via Prisma
   try {
-    await getDb();
-    console.log('[Database] PostgreSQL connection ready.');
+    const conn = await checkDatabaseConnection();
+    if (conn.connected) {
+      console.log('[Database] PostgreSQL connection ready via Prisma.');
+    } else {
+      console.warn('[Database] PostgreSQL check notice:', conn.error);
+    }
     // Check if migration is needed
     await runJsonToPostgresMigration();
   } catch (err: any) {
@@ -72,13 +76,23 @@ async function startServer() {
   // Health check endpoint
   app.get('/api/health', async (_req: Request, res: Response) => {
     try {
-      const db = await getDb();
-      const test = await db.query('SELECT 1 as alive');
+      const conn = await checkDatabaseConnection();
+      if (!conn.connected) {
+        res.status(503).json({
+          status: 'error',
+          database: 'postgresql',
+          orm: 'prisma',
+          connected: false,
+          error: conn.error,
+          timestamp: new Date().toISOString(),
+        });
+        return;
+      }
       res.json({
         status: 'ok',
         database: 'postgresql',
-        mode: dbManager.getIsEmbedded() ? 'embedded-pglite' : 'remote-postgres',
-        connected: test.rows.length > 0,
+        orm: 'prisma',
+        connected: true,
         timestamp: new Date().toISOString(),
       });
     } catch (err: any) {

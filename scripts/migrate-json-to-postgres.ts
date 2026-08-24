@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { getDb } from '../src/server/db/postgres';
+import { checkDatabaseConnection } from '../src/server/db/client';
 import { userRepository } from '../src/server/auth/repositories/user.repository';
 import { tradingAccountRepository } from '../src/server/trading/repositories/account.repository';
 import { playbookRepository } from '../src/server/trading/repositories/playbook.repository';
@@ -49,8 +49,13 @@ export async function runJsonToPostgresMigration(): Promise<MigrationReport> {
   console.log('🔄 TRE13ZE MIGRATION JSON -> POSTGRESQL');
   console.log('====================================================');
 
-  // Initialize DB
-  await getDb();
+  // Initialize DB Connection verification
+  const dbHealth = await checkDatabaseConnection();
+  if (!dbHealth.connected) {
+    console.warn('[Migration Warning] PostgreSQL check returned:', dbHealth.error);
+  } else {
+    console.log('[Migration] PostgreSQL database connection verified via Prisma.');
+  }
 
   // Read JSON file if available
   let rawData: any = {};

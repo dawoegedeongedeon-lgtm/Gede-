@@ -1,5 +1,5 @@
 import { UserRecord } from '../types';
-import { getDb } from '../../db/postgres';
+import { prisma } from '../../db/client';
 
 export interface IUserRepository {
   findByEmail(email: string): Promise<UserRecord | null>;
@@ -11,39 +11,57 @@ export interface IUserRepository {
   listAll(): Promise<UserRecord[]>;
 }
 
-function mapRowToUser(r: any): UserRecord {
+function mapPrismaUser(u: any): UserRecord {
   return {
-    id: r.id,
-    email: r.email,
-    name: r.name,
-    passwordHash: r.password_hash ?? undefined,
-    role: r.role || 'Trader Indépendant',
-    plan: r.plan || 'Pro Desk & MT5 Live',
-    avatarUrl: r.avatar_url ?? undefined,
-    emailVerified: Boolean(r.email_verified),
-    createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at || new Date().toISOString()),
-    updatedAt: r.updated_at instanceof Date ? r.updated_at.toISOString() : (r.updated_at ? String(r.updated_at) : undefined),
-    lastLoginAt: r.last_login_at instanceof Date ? r.last_login_at.toISOString() : (r.last_login_at ? String(r.last_login_at) : undefined),
+    id: u.id,
+    email: u.email,
+    name: u.name,
+    passwordHash: u.passwordHash ?? undefined,
+    role: u.role || 'Trader Indépendant',
+    plan: u.plan || 'Pro Desk & MT5 Live',
+    avatarUrl: u.avatarUrl ?? undefined,
+    emailVerified: Boolean(u.emailVerified),
+    createdAt: u.createdAt instanceof Date ? u.createdAt.toISOString() : String(u.createdAt),
+    updatedAt: u.updatedAt instanceof Date ? u.updatedAt.toISOString() : (u.updatedAt ? String(u.updatedAt) : undefined),
+    lastLoginAt: u.lastLoginAt instanceof Date ? u.lastLoginAt.toISOString() : (u.lastLoginAt ? String(u.lastLoginAt) : undefined),
   };
 }
 
-export class PostgresUserRepository implements IUserRepository {
+export class PrismaUserRepository implements IUserRepository {
   public async findByEmail(email: string): Promise<UserRecord | null> {
+    if (!email || typeof email !== 'string') return null;
     const normalized = email.toLowerCase().trim();
-    const db = await getDb();
-    const res = await db.query('SELECT * FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1', [normalized]);
-    return res.rows.length > 0 ? mapRowToUser(res.rows[0]) : null;
+    try {
+      const user = await prisma.user.findFirst({
+        where: {
+          email: {
+            equals: normalized,
+            mode: 'insensitive',
+          },
+        },
+      });
+      return user ? mapPrismaUser(user) : null;
+    } catch (err: any) {
+      console.error('[PrismaUserRepository.findByEmail Error]:', err.message);
+      return null;
+    }
   }
 
   public async findById(id: string): Promise<UserRecord | null> {
-    const db = await getDb();
-    const res = await db.query('SELECT * FROM users WHERE id = $1 LIMIT 1', [id]);
-    return res.rows.length > 0 ? mapRowToUser(res.rows[0]) : null;
+    if (!id || typeof id !== 'string') return null;
+    try {
+      const user = await prisma.user.findUnique({
+        where: { id },
+      });
+      return user ? mapPrismaUser(user) : null;
+    } catch (err: any) {
+      console.error('[PrismaUserRepository.findById Error]:', err.message);
+      return null;
+    }
   }
 
   public async create(userData: Omit<UserRecord, 'id' | 'createdAt'>): Promise<UserRecord> {
     const normalizedEmail = userData.email.toLowerCase().trim();
-    const db = await getDb();
 
     // Check unique email
     const existing = await this.findByEmail(normalizedEmail);
@@ -53,86 +71,83 @@ export class PostgresUserRepository implements IUserRepository {
 
     const id = `usr_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
     const avatarUrl = userData.avatarUrl || `https://api.dicebear.com/7.x/bottts/svg?seed=${normalizedEmail}`;
-    const now = new Date();
 
-    const sql = `
-      INSERT INTO users (id, email, name, password_hash, avatar_url, role, plan, email_verified, last_login_at, created_at, updated_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-      RETURNING *
-    `;
+    const user = await prisma.user.create({
+      data: {
+        id,
+        email: normalizedEmail,
+        name: userData.name.trim(),
+        passwordHash: userData.passwordHash || null,
+        avatarUrl,
+        role: userData.role || 'Trader Indépendant',
+        plan: userData.plan || 'Pro Desk & MT5 Live',
+        emailVerified: userData.emailVerified ?? false,
+        lastLoginAt: userData.lastLoginAt ? new Date(userData.lastLoginAt) : new Date(),
+      },
+    });
 
-    const res = await db.query(sql, [
-      id,
-      normalizedEmail,
-      userData.name.trim(),
-      userData.passwordHash || null,
-      avatarUrl,
-      userData.role || 'Trader Indépendant',
-      userData.plan || 'Pro Desk & MT5 Live',
-      userData.emailVerified ?? false,
-      userData.lastLoginAt ? new Date(userData.lastLoginAt) : now,
-      now,
-      now,
-    ]);
-
-    return mapRowToUser(res.rows[0]);
+    return mapPrismaUser(user);
   }
 
   public async update(id: string, partial: Partial<UserRecord>): Promise<UserRecord | null> {
-    const db = await getDb();
-    const current = await this.findById(id);
-    if (!current) return null;
+    try {
+      const data: any = {};
+      if (partial.email !== undefined) data.email = partial.email.toLowerCase().trim();
+      if (partial.name !== undefined) data.name = partial.name.trim();
+      if (partial.passwordHash !== undefined) data.passwordHash = partial.passwordHash;
+      if (partial.avatarUrl !== undefined) data.avatarUrl = partial.avatarUrl;
+      if (partial.role !== undefined) data.role = partial.role;
+      if (partial.plan !== undefined) data.plan = partial.plan;
+      if (partial.emailVerified !== undefined) data.emailVerified = partial.emailVerified;
+      if (partial.lastLoginAt !== undefined) {
+        data.lastLoginAt = partial.lastLoginAt ? new Date(partial.lastLoginAt) : null;
+      }
 
-    const email = partial.email !== undefined ? partial.email.toLowerCase().trim() : current.email;
-    const name = partial.name !== undefined ? partial.name : current.name;
-    const passwordHash = partial.passwordHash !== undefined ? partial.passwordHash : current.passwordHash;
-    const avatarUrl = partial.avatarUrl !== undefined ? partial.avatarUrl : current.avatarUrl;
-    const role = partial.role !== undefined ? partial.role : current.role;
-    const plan = partial.plan !== undefined ? partial.plan : current.plan;
-    const emailVerified = partial.emailVerified !== undefined ? partial.emailVerified : current.emailVerified;
-    const lastLoginAt = partial.lastLoginAt !== undefined ? new Date(partial.lastLoginAt) : (current.lastLoginAt ? new Date(current.lastLoginAt) : null);
-    const now = new Date();
+      const user = await prisma.user.update({
+        where: { id },
+        data,
+      });
 
-    const sql = `
-      UPDATE users
-      SET email = $1, name = $2, password_hash = $3, avatar_url = $4, role = $5, plan = $6, email_verified = $7, last_login_at = $8, updated_at = $9
-      WHERE id = $10
-      RETURNING *
-    `;
-
-    const res = await db.query(sql, [
-      email,
-      name,
-      passwordHash || null,
-      avatarUrl || null,
-      role,
-      plan,
-      emailVerified,
-      lastLoginAt,
-      now,
-      id,
-    ]);
-
-    return res.rows.length > 0 ? mapRowToUser(res.rows[0]) : null;
+      return mapPrismaUser(user);
+    } catch (err: any) {
+      console.error('[PrismaUserRepository.update Error]:', err.message);
+      return null;
+    }
   }
 
   public async delete(id: string): Promise<boolean> {
-    const db = await getDb();
-    const res = await db.query('DELETE FROM users WHERE id = $1', [id]);
-    return res.rowCount > 0;
+    try {
+      await prisma.user.delete({
+        where: { id },
+      });
+      return true;
+    } catch (err: any) {
+      console.error('[PrismaUserRepository.delete Error]:', err.message);
+      return false;
+    }
   }
 
   public async count(): Promise<number> {
-    const db = await getDb();
-    const res = await db.query('SELECT COUNT(*)::int as total FROM users');
-    return res.rows.length > 0 ? Number(res.rows[0].total) : 0;
+    try {
+      return await prisma.user.count();
+    } catch (err: any) {
+      console.error('[PrismaUserRepository.count Error]:', err.message);
+      return 0;
+    }
   }
 
   public async listAll(): Promise<UserRecord[]> {
-    const db = await getDb();
-    const res = await db.query('SELECT * FROM users ORDER BY created_at ASC');
-    return res.rows.map(mapRowToUser);
+    try {
+      const users = await prisma.user.findMany({
+        orderBy: { createdAt: 'asc' },
+      });
+      return users.map(mapPrismaUser);
+    } catch (err: any) {
+      console.error('[PrismaUserRepository.listAll Error]:', err.message);
+      return [];
+    }
   }
 }
 
-export const userRepository: IUserRepository = new PostgresUserRepository();
+export const userRepository: IUserRepository = new PrismaUserRepository();
+

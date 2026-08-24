@@ -1,4 +1,4 @@
-import { getDb } from '../../db/postgres';
+import { prisma } from '../../db/client';
 
 export interface PlaybookRecord {
   id: string;
@@ -24,136 +24,112 @@ export interface IPlaybookRepository {
   count(userId?: string): Promise<number>;
 }
 
-function parseJsonField(val: any): any[] {
-  if (Array.isArray(val)) return val;
-  if (typeof val === 'string') {
-    try {
-      const p = JSON.parse(val);
-      return Array.isArray(p) ? p : [];
-    } catch {}
-  }
-  return [];
-}
-
-function mapRowToPlaybook(r: any): PlaybookRecord {
+function mapPrismaPlaybook(r: any): PlaybookRecord {
   return {
     id: r.id,
-    userId: r.user_id ?? undefined,
+    userId: r.userId ?? undefined,
     name: r.name,
     description: r.description ?? undefined,
-    assetClass: parseJsonField(r.asset_class),
-    preferredTimeframe: r.preferred_timeframe ?? undefined,
-    preferredSession: r.preferred_session ?? undefined,
-    rules: parseJsonField(r.rules),
-    createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at || new Date().toISOString()),
-    updatedAt: r.updated_at instanceof Date ? r.updated_at.toISOString() : undefined,
+    assetClass: Array.isArray(r.assetClass) ? r.assetClass : [],
+    preferredTimeframe: r.preferredTimeframe ?? undefined,
+    preferredSession: r.preferredSession ?? undefined,
+    rules: Array.isArray(r.rules) ? r.rules : [],
+    createdAt: r.createdAt instanceof Date ? r.createdAt.toISOString() : String(r.createdAt || new Date().toISOString()),
+    updatedAt: r.updatedAt instanceof Date ? r.updatedAt.toISOString() : undefined,
   };
 }
 
-export class PostgresPlaybookRepository implements IPlaybookRepository {
+export class PrismaPlaybookRepository implements IPlaybookRepository {
   public async findById(id: string): Promise<PlaybookRecord | null> {
+    if (!id || typeof id !== 'string') return null;
     try {
-      const db = await getDb();
-      const res = await db.query('SELECT * FROM playbooks WHERE id = $1 LIMIT 1', [id]);
-      return res.rows.length > 0 ? mapRowToPlaybook(res.rows[0]) : null;
+      const pb = await prisma.playbook.findUnique({
+        where: { id },
+      });
+      return pb ? mapPrismaPlaybook(pb) : null;
     } catch (err: any) {
-      console.error('[PostgresPlaybookRepository.findById Error]:', err.message);
+      console.error('[PrismaPlaybookRepository.findById Error]:', err.message);
       return null;
     }
   }
 
   public async findByUserId(userId?: string): Promise<PlaybookRecord[]> {
     try {
-      const db = await getDb();
-      const res = userId
-        ? await db.query('SELECT * FROM playbooks WHERE user_id = $1 OR user_id IS NULL ORDER BY created_at ASC', [userId])
-        : await db.query('SELECT * FROM playbooks ORDER BY created_at ASC');
-      return res.rows.map(mapRowToPlaybook);
+      const pbs = await prisma.playbook.findMany({
+        where: userId
+          ? {
+              OR: [{ userId }, { userId: null }],
+            }
+          : undefined,
+        orderBy: { createdAt: 'asc' },
+      });
+      return pbs.map(mapPrismaPlaybook);
     } catch (err: any) {
-      console.error('[PostgresPlaybookRepository.findByUserId Error]:', err.message);
+      console.error('[PrismaPlaybookRepository.findByUserId Error]:', err.message);
       return [];
     }
   }
 
   public async listAll(): Promise<PlaybookRecord[]> {
     try {
-      const db = await getDb();
-      const res = await db.query('SELECT * FROM playbooks ORDER BY created_at ASC');
-      return res.rows.map(mapRowToPlaybook);
+      const pbs = await prisma.playbook.findMany({
+        orderBy: { createdAt: 'asc' },
+      });
+      return pbs.map(mapPrismaPlaybook);
     } catch (err: any) {
-      console.error('[PostgresPlaybookRepository.listAll Error]:', err.message);
+      console.error('[PrismaPlaybookRepository.listAll Error]:', err.message);
       return [];
     }
   }
 
   public async create(data: Omit<PlaybookRecord, 'createdAt' | 'updatedAt'>): Promise<PlaybookRecord> {
-    const db = await getDb();
     const id = data.id || `pb_${Date.now().toString(36)}`;
-    const now = new Date();
+    const pb = await prisma.playbook.create({
+      data: {
+        id,
+        userId: data.userId || null,
+        name: data.name,
+        description: data.description || null,
+        assetClass: Array.isArray(data.assetClass) ? data.assetClass : [],
+        preferredTimeframe: data.preferredTimeframe || null,
+        preferredSession: data.preferredSession || null,
+        rules: Array.isArray(data.rules) ? data.rules : [],
+      },
+    });
 
-    const sql = `
-      INSERT INTO playbooks (id, user_id, name, description, asset_class, preferred_timeframe, preferred_session, rules, created_at, updated_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-      RETURNING *
-    `;
-
-    const res = await db.query(sql, [
-      id,
-      data.userId || null,
-      data.name,
-      data.description || null,
-      JSON.stringify(data.assetClass || []),
-      data.preferredTimeframe || null,
-      data.preferredSession || null,
-      JSON.stringify(data.rules || []),
-      now,
-      now,
-    ]);
-
-    return mapRowToPlaybook(res.rows[0]);
+    return mapPrismaPlaybook(pb);
   }
 
   public async update(id: string, partial: Partial<PlaybookRecord>): Promise<PlaybookRecord | null> {
-    const current = await this.findById(id);
-    if (!current) return null;
+    try {
+      const data: any = {};
+      if (partial.name !== undefined) data.name = partial.name;
+      if (partial.description !== undefined) data.description = partial.description || null;
+      if (partial.assetClass !== undefined) data.assetClass = Array.isArray(partial.assetClass) ? partial.assetClass : [];
+      if (partial.preferredTimeframe !== undefined) data.preferredTimeframe = partial.preferredTimeframe || null;
+      if (partial.preferredSession !== undefined) data.preferredSession = partial.preferredSession || null;
+      if (partial.rules !== undefined) data.rules = Array.isArray(partial.rules) ? partial.rules : [];
 
-    const db = await getDb();
-    const name = partial.name !== undefined ? partial.name : current.name;
-    const description = partial.description !== undefined ? partial.description : current.description;
-    const assetClass = partial.assetClass !== undefined ? partial.assetClass : current.assetClass;
-    const preferredTimeframe = partial.preferredTimeframe !== undefined ? partial.preferredTimeframe : current.preferredTimeframe;
-    const preferredSession = partial.preferredSession !== undefined ? partial.preferredSession : current.preferredSession;
-    const rules = partial.rules !== undefined ? partial.rules : current.rules;
-    const now = new Date();
+      const pb = await prisma.playbook.update({
+        where: { id },
+        data,
+      });
 
-    const sql = `
-      UPDATE playbooks
-      SET name = $1, description = $2, asset_class = $3, preferred_timeframe = $4, preferred_session = $5, rules = $6, updated_at = $7
-      WHERE id = $8
-      RETURNING *
-    `;
-
-    const res = await db.query(sql, [
-      name,
-      description || null,
-      JSON.stringify(assetClass || []),
-      preferredTimeframe || null,
-      preferredSession || null,
-      JSON.stringify(rules || []),
-      now,
-      id,
-    ]);
-
-    return res.rows.length > 0 ? mapRowToPlaybook(res.rows[0]) : null;
+      return mapPrismaPlaybook(pb);
+    } catch (err: any) {
+      console.error('[PrismaPlaybookRepository.update Error]:', err.message);
+      return null;
+    }
   }
 
   public async delete(id: string): Promise<boolean> {
     try {
-      const db = await getDb();
-      const res = await db.query('DELETE FROM playbooks WHERE id = $1', [id]);
-      return res.rowCount > 0;
+      await prisma.playbook.delete({
+        where: { id },
+      });
+      return true;
     } catch (err: any) {
-      console.error('[PostgresPlaybookRepository.delete Error]:', err.message);
+      console.error('[PrismaPlaybookRepository.delete Error]:', err.message);
       return false;
     }
   }
@@ -169,15 +145,14 @@ export class PostgresPlaybookRepository implements IPlaybookRepository {
 
   public async count(userId?: string): Promise<number> {
     try {
-      const db = await getDb();
-      const res = userId
-        ? await db.query('SELECT COUNT(*)::int as total FROM playbooks WHERE user_id = $1 OR user_id IS NULL', [userId])
-        : await db.query('SELECT COUNT(*)::int as total FROM playbooks');
-      return res.rows.length > 0 ? Number(res.rows[0].total) : 0;
+      return await prisma.playbook.count({
+        where: userId ? { OR: [{ userId }, { userId: null }] } : undefined,
+      });
     } catch (err: any) {
       return 0;
     }
   }
 }
 
-export const playbookRepository: IPlaybookRepository = new PostgresPlaybookRepository();
+export const playbookRepository: IPlaybookRepository = new PrismaPlaybookRepository();
+
