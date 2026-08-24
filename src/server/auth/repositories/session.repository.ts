@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { SessionRecord } from '../types';
+import { getDb } from '../../db/postgres';
 
 export interface ISessionRepository {
   create(userId: string, ttlDays?: number, meta?: { ip?: string; userAgent?: string }): Promise<SessionRecord>;
@@ -7,72 +8,120 @@ export interface ISessionRepository {
   delete(sessionId: string): Promise<boolean>;
   deleteByUserId(userId: string): Promise<number>;
   cleanExpired(): Promise<void>;
+  count(): Promise<number>;
 }
 
-export class MemorySessionRepository implements ISessionRepository {
-  private sessions: Map<string, SessionRecord> = new Map();
+function mapRowToSession(r: any): SessionRecord {
+  return {
+    id: r.id,
+    userId: r.user_id,
+    createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at || new Date().toISOString()),
+    expiresAt: r.expires_at instanceof Date ? r.expires_at.toISOString() : String(r.expires_at),
+    ip: r.ip ?? undefined,
+    userAgent: r.user_agent ?? undefined,
+  };
+}
+
+export class PostgresSessionRepository implements ISessionRepository {
+  private hashToken(token: string): string {
+    return crypto.createHash('sha256').update(token).digest('hex');
+  }
 
   public async create(
     userId: string,
     ttlDays: number = 7,
     meta?: { ip?: string; userAgent?: string }
   ): Promise<SessionRecord> {
-    // Generate 64-char cryptographically secure random session ID
-    const sessionId = crypto.randomBytes(32).toString('hex');
+    const rawSessionId = crypto.randomBytes(32).toString('hex');
+    const tokenHash = this.hashToken(rawSessionId);
     const now = new Date();
     const expiresAt = new Date(now.getTime() + ttlDays * 24 * 60 * 60 * 1000);
 
-    const session: SessionRecord = {
-      id: sessionId,
-      userId,
-      createdAt: now.toISOString(),
-      expiresAt: expiresAt.toISOString(),
-      ip: meta?.ip,
-      userAgent: meta?.userAgent,
-    };
+    const db = await getDb();
+    const sql = `
+      INSERT INTO sessions (id, user_id, token_hash, ip, user_agent, expires_at, created_at, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      RETURNING *
+    `;
 
-    this.sessions.set(sessionId, session);
-    return session;
+    const res = await db.query(sql, [
+      rawSessionId,
+      userId,
+      tokenHash,
+      meta?.ip || null,
+      meta?.userAgent || null,
+      expiresAt,
+      now,
+      now,
+    ]);
+
+    return mapRowToSession(res.rows[0]);
   }
 
   public async findById(sessionId: string): Promise<SessionRecord | null> {
-    if (!sessionId) return null;
-    const session = this.sessions.get(sessionId);
-    if (!session) return null;
+    if (!sessionId || typeof sessionId !== 'string') return null;
 
-    // Check expiration
-    if (new Date(session.expiresAt).getTime() < Date.now()) {
-      this.sessions.delete(sessionId);
+    try {
+      const db = await getDb();
+      const res = await db.query('SELECT * FROM sessions WHERE id = $1 LIMIT 1', [sessionId]);
+      if (res.rows.length === 0) return null;
+
+      const session = mapRowToSession(res.rows[0]);
+
+      // Verify expiration
+      if (new Date(session.expiresAt).getTime() < Date.now()) {
+        await this.delete(sessionId);
+        return null;
+      }
+
+      return session;
+    } catch (err: any) {
+      console.error('[PostgresSessionRepository.findById Error]:', err.message);
       return null;
     }
-
-    return session;
   }
 
   public async delete(sessionId: string): Promise<boolean> {
-    return this.sessions.delete(sessionId);
+    if (!sessionId) return false;
+    try {
+      const db = await getDb();
+      const res = await db.query('DELETE FROM sessions WHERE id = $1', [sessionId]);
+      return res.rowCount > 0;
+    } catch (err: any) {
+      console.error('[PostgresSessionRepository.delete Error]:', err.message);
+      return false;
+    }
   }
 
   public async deleteByUserId(userId: string): Promise<number> {
-    let count = 0;
-    for (const [id, session] of this.sessions.entries()) {
-      if (session.userId === userId) {
-        this.sessions.delete(id);
-        count++;
-      }
+    try {
+      const db = await getDb();
+      const res = await db.query('DELETE FROM sessions WHERE user_id = $1', [userId]);
+      return res.rowCount;
+    } catch (err: any) {
+      console.error('[PostgresSessionRepository.deleteByUserId Error]:', err.message);
+      return 0;
     }
-    return count;
   }
 
   public async cleanExpired(): Promise<void> {
-    const now = Date.now();
-    for (const [id, session] of this.sessions.entries()) {
-      if (new Date(session.expiresAt).getTime() < now) {
-        this.sessions.delete(id);
-      }
+    try {
+      const db = await getDb();
+      await db.query('DELETE FROM sessions WHERE expires_at < NOW()');
+    } catch (err: any) {
+      console.error('[PostgresSessionRepository.cleanExpired Error]:', err.message);
+    }
+  }
+
+  public async count(): Promise<number> {
+    try {
+      const db = await getDb();
+      const res = await db.query('SELECT COUNT(*)::int as total FROM sessions');
+      return res.rows.length > 0 ? Number(res.rows[0].total) : 0;
+    } catch (err: any) {
+      return 0;
     }
   }
 }
 
-// Singleton session repository export
-export const sessionRepository: ISessionRepository = new MemorySessionRepository();
+export const sessionRepository: ISessionRepository = new PostgresSessionRepository();

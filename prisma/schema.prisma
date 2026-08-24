@@ -1,0 +1,178 @@
+// Prisma Schema for Tre13ze Journal
+// Database: PostgreSQL
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id            String           @id @default(cuid())
+  email         String           @unique
+  name          String
+  passwordHash  String?
+  avatarUrl     String?
+  role          String           @default("Trader Indépendant")
+  plan          String           @default("Pro Desk & MT5 Live")
+  emailVerified Boolean          @default(false)
+  lastLoginAt   DateTime?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  sessions      Session[]
+  accounts      TradingAccount[]
+  trades        Trade[]
+  playbooks     Playbook[]
+  mt5Accounts   Mt5Account[]
+  mt5Logs       Mt5SyncLog[]
+
+  @@map("users")
+}
+
+model Session {
+  id        String   @id
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String?
+  ip        String?
+  userAgent String?
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+model TradingAccount {
+  id               String   @id @default(cuid())
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name             String
+  brokerOrPropFirm String?
+  accountNumber    String?
+  accountType      String   @default("LIVE")
+  currency         String   @default("$")
+  initialBalance   Float    @default(10000)
+  currentBalance   Float?
+  description      String?
+  isDefault        Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  trades           Trade[]
+
+  @@index([userId])
+  @@map("trading_accounts")
+}
+
+model Trade {
+  id               String          @id @default(cuid())
+  userId           String
+  user             User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accountId        String?
+  account          TradingAccount? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  ticketNumber     String?
+  pair             String
+  assetClass       String          @default("FOREX")
+  direction        String          @default("LONG")
+  status           String          @default("WIN")
+  entryDate        String
+  entryTime        String?
+  exitDate         String?
+  exitTime         String?
+  session          String?
+  timeframe        String?
+  entryPrice       Float
+  exitPrice        Float
+  stopLoss         Float
+  takeProfit       Float
+  quantity         Float           @default(1)
+  fees             Float           @default(0)
+  riskAmount       Float           @default(0)
+  pnl              Float           @default(0)
+  pnlPercentage    Float           @default(0)
+  rMultiple        Float           @default(0)
+  strategy         String?
+  playbookId       String?
+  playbook         Playbook?       @relation(fields: [playbookId], references: [id], onDelete: SetNull)
+  mistakes         String[]        @default([])
+  emotions         String?
+  executionRating  Int             @default(5)
+  rulesRespected   Boolean         @default(true)
+  indicators       String[]        @default([])
+  supportLevels    Float[]         @default([])
+  resistanceLevels Float[]         @default([])
+  chartPatterns    String[]        @default([])
+  technicalNotes   String?
+  chartUrl         String?
+  notes            String?
+  keyTakeaway      String?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  @@index([userId])
+  @@index([accountId])
+  @@index([pair])
+  @@index([entryDate])
+  @@map("trades")
+}
+
+model Playbook {
+  id                 String   @id @default(cuid())
+  userId             String?
+  user               User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name               String
+  description        String?
+  assetClass         String[] @default([])
+  preferredTimeframe String?
+  preferredSession   String?
+  rules              String[] @default([])
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  trades             Trade[]
+
+  @@index([userId])
+  @@map("playbooks")
+}
+
+model Mt5Account {
+  id               String       @id @default(cuid())
+  userId           String
+  user             User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accountName      String
+  server           String
+  accountNumber    String
+  investorPassword String?
+  status           String       @default("CONNECTED")
+  webhookSecret    String?
+  lastSyncAt       DateTime?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  logs             Mt5SyncLog[]
+
+  @@index([userId])
+  @@map("mt5_accounts")
+}
+
+model Mt5SyncLog {
+  id           String      @id @default(cuid())
+  userId       String
+  user         User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mt5AccountId String?
+  mt5Account   Mt5Account? @relation(fields: [mt5AccountId], references: [id], onDelete: SetNull)
+  ticket       String?
+  action       String
+  status       String
+  details      String?
+  timestamp    DateTime    @default(now())
+
+  @@index([userId])
+  @@map("mt5_sync_logs")
+}
