@@ -7,8 +7,11 @@ dotenv.config();
 
 const { Pool } = pg;
 
-// Connection string from environment variable or standard local development default
-const connectionString = process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/tre13ze_db';
+// Enforce mandatory DATABASE_URL without localhost or credentials fallback
+const connectionString = process.env.DATABASE_URL;
+if (!connectionString) {
+  throw new Error('[Database Configuration Error] DATABASE_URL is required.');
+}
 
 // Centralized Postgres connection pool
 let pool: pg.Pool | null = null;
@@ -32,20 +35,12 @@ export function getPgPool(): pg.Pool {
 
 export function getPrismaClient(): PrismaClient {
   if (!prismaInstance) {
-    try {
-      const pgPool = getPgPool();
-      const adapter = new PrismaPg(pgPool);
-      prismaInstance = new PrismaClient({
-        adapter,
-        log: process.env.NODE_ENV === 'development' ? ['warn', 'error'] : ['error'],
-      });
-    } catch (err: any) {
-      console.warn('[Prisma Initialization Warning]:', err?.message);
-      // Fallback direct PrismaClient instance if adapter creation encounters environment variances
-      prismaInstance = new PrismaClient({
-        log: ['error'],
-      });
-    }
+    const pgPool = getPgPool();
+    const adapter = new PrismaPg(pgPool);
+    prismaInstance = new PrismaClient({
+      adapter,
+      log: process.env.NODE_ENV === 'development' ? ['warn', 'error'] : ['error'],
+    });
   }
   return prismaInstance;
 }

@@ -72,67 +72,67 @@ export async function runJsonToPostgresMigration(): Promise<MigrationReport> {
     console.log('[Migration] No existing trades_db.json found. Creating initial seed data.');
   }
 
-  // 1. Ensure primary user exists
-  let primaryUserId = 'usr_default_trader_01';
-  try {
-    const existingUsers = await userRepository.listAll();
-    let primaryUser = existingUsers.find((u) => u.email === 'alex.dupont@tre13ze.io') || existingUsers[0];
-
-    if (!primaryUser) {
-      primaryUser = await userRepository.create({
-        email: 'alex.dupont@tre13ze.io',
-        name: 'Alex Dupont',
-        passwordHash: '$2b$10$wEkgQx24xJ1t5fR6hD12re8s3d9f0a2b4c6e8g0i2k4m6o8q0s2u4', // sample hashed
-        avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-        role: 'Trader Indépendant Pro',
-        plan: 'Pro Desk & MT5 Live',
-        emailVerified: true,
-        lastLoginAt: new Date().toISOString(),
-      });
-      console.log(`[Migration] Primary user created in PostgreSQL (ID: ${primaryUser.id})`);
-    } else {
-      console.log(`[Migration] Found existing user in PostgreSQL (ID: ${primaryUser.id})`);
+  // 1. Process Users (Only if present in JSON)
+  const jsonUsers = Array.isArray(rawData.users) ? rawData.users : [];
+  for (const u of jsonUsers) {
+    if (!u || !u.email) continue;
+    try {
+      const existing = await userRepository.findByEmail(u.email);
+      if (!existing) {
+        await userRepository.create({
+          email: u.email,
+          name: u.name || 'Trader',
+          passwordHash: u.passwordHash,
+          avatarUrl: u.avatarUrl,
+          role: u.role || 'Trader Indépendant',
+          plan: u.plan || 'Pro Desk & MT5 Live',
+          emailVerified: Boolean(u.emailVerified),
+          lastLoginAt: u.lastLoginAt,
+        });
+        report.usersProcessed++;
+        console.log(`[Migration] User migrated: ${u.email}`);
+      }
+    } catch (err: any) {
+      console.error(`[Migration] User ${u.email} error:`, err.message);
+      report.errors.push(`User ${u.email} error: ${err.message}`);
     }
-
-    primaryUserId = primaryUser.id;
-    report.usersProcessed = 1;
-  } catch (err: any) {
-    console.error('[Migration] User processing error:', err.message);
-    report.errors.push(`User error: ${err.message}`);
   }
 
-  // 2. Process Trading Accounts
-  const jsonAccounts = Array.isArray(rawData.accounts) ? rawData.accounts : [
-    {
-      id: 'acc-demo-10k',
-      name: 'Compte Démo FTMO 10K',
-      brokerOrPropFirm: 'FTMO',
-      accountNumber: '1029482',
-      accountType: 'PROP_FIRM_EVALUATION',
-      currency: '$',
-      initialBalance: 10000,
-      currentBalance: 11450,
-      description: 'Challenge 10k en cours de validation',
-      isDefault: true,
-      createdAt: '2025-01-01T08:00:00.000Z',
-    },
-    {
-      id: 'acc-live-personal',
-      name: 'Compte Personnel Live IC Markets',
-      brokerOrPropFirm: 'IC Markets',
-      accountNumber: '839201',
-      accountType: 'LIVE_PERSONAL',
-      currency: '$',
-      initialBalance: 5000,
-      currentBalance: 5820,
-      description: 'Capital propre swing & day-trading',
-      isDefault: false,
-      createdAt: '2025-01-10T10:00:00.000Z',
-    }
-  ];
+  // Check if any existing user is present in DB for entity association
+  const existingUsers = await userRepository.listAll();
+  const primaryUserId = existingUsers.length > 0 ? existingUsers[0].id : null;
 
+  // 2. Process Playbooks (Global / System or User specific)
+  const jsonPlaybooks = Array.isArray(rawData.playbooks) ? rawData.playbooks : [];
+  for (const pb of jsonPlaybooks) {
+    if (!pb || !pb.id) continue;
+    try {
+      await playbookRepository.upsert({
+        id: String(pb.id),
+        userId: pb.userId || undefined,
+        name: pb.name || 'Stratégie',
+        description: pb.description,
+        assetClass: Array.isArray(pb.assetClass) ? pb.assetClass : [],
+        preferredTimeframe: pb.preferredTimeframe,
+        preferredSession: pb.preferredSession,
+        rules: Array.isArray(pb.rules) ? pb.rules : [],
+        createdAt: pb.createdAt || new Date().toISOString(),
+      });
+      report.playbooksProcessed++;
+    } catch (err: any) {
+      console.error(`[Migration] Playbook ${pb.id} error:`, err.message);
+      report.errors.push(`Playbook ${pb.id} error: ${err.message}`);
+    }
+  }
+
+  // 3. Process Trading Accounts (Only if accounts present in JSON)
+  const jsonAccounts = Array.isArray(rawData.accounts) ? rawData.accounts : [];
   for (const acc of jsonAccounts) {
     if (!acc || !acc.id) continue;
+    if (!primaryUserId) {
+      console.log(`[Migration Notice] Account ${acc.id} skipped: No user found in database for mandatory foreign key.`);
+      continue;
+    }
     try {
       await tradingAccountRepository.upsert({
         id: String(acc.id),
@@ -155,67 +155,14 @@ export async function runJsonToPostgresMigration(): Promise<MigrationReport> {
     }
   }
 
-  // 3. Process Playbooks / Strategies
-  const jsonPlaybooks = Array.isArray(rawData.playbooks) ? rawData.playbooks : [
-    {
-      id: 'ict-silver-bullet',
-      name: 'ICT Silver Bullet',
-      description: 'Entrée FVG pendant les fenêtres de liquidité 10h-11h NY et 14h-15h NY',
-      assetClass: ['FOREX', 'INDICES'],
-      preferredTimeframe: '1M / 5M',
-      preferredSession: 'NEW_YORK',
-      rules: [
-        'Identifier la liquidité Buy-side / Sell-side sur 15M/1H',
-        'Attendre un Market Structure Shift (MSS) avec déplacement net',
-        'Entrée limite sur le Fair Value Gap (FVG)',
-        'Stop Loss au-delà du swing high/low',
-        'Take Profit sur la prochaine pool de liquidité opposée (min 2R)',
-      ],
-      createdAt: '2025-01-01T00:00:00.000Z',
-    },
-    {
-      id: 'smc-orderblock-fvg',
-      name: 'SMC Order Block + FVG',
-      description: 'Atténuation sur Order Block non mitigé avec confluence FVG',
-      assetClass: ['FOREX', 'COMMODITIES'],
-      preferredTimeframe: '15M / 1H',
-      preferredSession: 'LONDON',
-      rules: [
-        'Identifier la tendance Higher Timeframe (4H / Daily)',
-        'Localiser un Order Block institutionnel ayant provoqué une cassure de structure',
-        'Attendre le pullback dans la zone OTE (61.8% - 78.6% Fib)',
-        'Confirmation sur Lower Timeframe (CHoCH)',
-        'R:R minimum exigé 1:3',
-      ],
-      createdAt: '2025-01-02T00:00:00.000Z',
-    }
-  ];
-
-  for (const pb of jsonPlaybooks) {
-    if (!pb || !pb.id) continue;
-    try {
-      await playbookRepository.upsert({
-        id: String(pb.id),
-        userId: primaryUserId,
-        name: pb.name || 'Stratégie',
-        description: pb.description,
-        assetClass: Array.isArray(pb.assetClass) ? pb.assetClass : [],
-        preferredTimeframe: pb.preferredTimeframe,
-        preferredSession: pb.preferredSession,
-        rules: Array.isArray(pb.rules) ? pb.rules : [],
-        createdAt: pb.createdAt || new Date().toISOString(),
-      });
-      report.playbooksProcessed++;
-    } catch (err: any) {
-      console.error(`[Migration] Playbook ${pb.id} error:`, err.message);
-      report.errors.push(`Playbook ${pb.id} error: ${err.message}`);
-    }
-  }
-
-  // 4. Process Trades
+  // 4. Process Trades (Only if trades present in JSON)
   const jsonTrades = Array.isArray(rawData.trades) ? rawData.trades : [];
   for (const tr of jsonTrades) {
     if (!tr || !tr.id) continue;
+    if (!primaryUserId) {
+      console.log(`[Migration Notice] Trade ${tr.id} skipped: No user found in database for mandatory foreign key.`);
+      continue;
+    }
     try {
       await tradeRepository.upsert({
         id: String(tr.id),
@@ -265,10 +212,14 @@ export async function runJsonToPostgresMigration(): Promise<MigrationReport> {
     }
   }
 
-  // 5. Process MT5 Accounts
+  // 5. Process MT5 Accounts (Only if present in JSON)
   const jsonMt5Accounts = Array.isArray(rawData.mt5Accounts) ? rawData.mt5Accounts : [];
   for (const mt of jsonMt5Accounts) {
     if (!mt || !mt.id) continue;
+    if (!primaryUserId) {
+      console.log(`[Migration Notice] MT5 Account ${mt.id} skipped: No user found in database.`);
+      continue;
+    }
     try {
       await mt5Repository.upsertAccount({
         id: String(mt.id),

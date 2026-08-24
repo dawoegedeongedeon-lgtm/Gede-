@@ -3,9 +3,14 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+const databaseUrl = process.env.DATABASE_URL;
+if (!databaseUrl) {
+  throw new Error('[Database Configuration Error] DATABASE_URL is required.');
+}
+
 export default defineConfig({
   schema: 'prisma/schema.prisma',
   datasource: {
-    url: process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/tre13ze_db',
+    url: databaseUrl,
   },
 });
