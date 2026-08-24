@@ -6,32 +6,35 @@ import {
   User, 
   ShieldCheck, 
   ArrowRight, 
-  Sparkles, 
   CheckCircle2, 
   Zap,
-  Globe
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import { UserProfile } from '../types';
+import { useAuth } from '../context/AuthContext';
 
 interface AuthModalProps {
   isOpen: boolean;
   onClose: () => void;
-  currentUser: UserProfile | null;
-  onLoginSuccess: (user: UserProfile) => void;
-  onLogout: () => void;
+  currentUser?: UserProfile | null;
+  onLoginSuccess?: (user: UserProfile) => void;
+  onLogout?: () => void;
 }
 
 export const AuthModal: React.FC<AuthModalProps> = ({
   isOpen,
   onClose,
-  currentUser,
   onLoginSuccess,
-  onLogout,
+  onLogout: onLogoutProp,
 }) => {
+  const { user: currentUser, login, register, logout } = useAuth();
   const [isRegister, setIsRegister] = useState(false);
-  const [email, setEmail] = useState(currentUser?.email || 'mrtreize006@gmail.com');
-  const [name, setName] = useState(currentUser?.name || 'M. Treize');
-  const [password, setPassword] = useState('••••••••');
+  const [email, setEmail] = useState('');
+  const [name, setName] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -39,54 +42,66 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email || !email.includes('@')) {
+    setError(null);
+
+    const cleanEmail = email.trim();
+    if (!cleanEmail || !cleanEmail.includes('@')) {
       setError('Veuillez entrer une adresse e-mail valide.');
       return;
     }
 
+    if (isRegister) {
+      if (!name || name.trim().length < 2) {
+        setError('Veuillez renseigner votre nom (au moins 2 caractères).');
+        return;
+      }
+      if (!password || password.length < 8) {
+        setError('Le mot de passe doit contenir au moins 8 caractères.');
+        return;
+      }
+      if (password !== confirmPassword) {
+        setError('Les deux mots de passe ne correspondent pas.');
+        return;
+      }
+    } else {
+      if (!password) {
+        setError('Veuillez saisir votre mot de passe.');
+        return;
+      }
+    }
+
     setLoading(true);
-    setError(null);
 
     try {
-      const endpoint = isRegister ? '/api/auth/register' : '/api/auth/login';
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, name, password }),
-      });
-
-      const data = await res.json();
-      if (res.ok && data.success && data.user) {
-        onLoginSuccess(data.user);
-        onClose();
+      let loggedUser: UserProfile;
+      if (isRegister) {
+        loggedUser = await register(cleanEmail, name.trim(), password, confirmPassword);
       } else {
-        setError(data.error || 'Une erreur est survenue lors de la connexion.');
+        loggedUser = await login(cleanEmail, password, true);
       }
-    } catch (err: any) {
-      // Fallback local session
-      const fallbackUser: UserProfile = {
-        id: `user-${Date.now()}`,
-        email: email.toLowerCase().trim(),
-        name: name || email.split('@')[0],
-        role: 'Pro Trader',
-        plan: 'Quant Elite & MT5 Live',
-        createdAt: new Date().toISOString(),
-      };
-      onLoginSuccess(fallbackUser);
+
+      if (onLoginSuccess) {
+        onLoginSuccess(loggedUser);
+      }
       onClose();
+    } catch (err: any) {
+      setError(err.message || 'Une erreur est survenue lors de la connexion.');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleQuickDemoUser = (demoEmail: string, demoName: string) => {
-    setEmail(demoEmail);
-    setName(demoName);
+  const handleLogoutClick = async () => {
+    await logout();
+    if (onLogoutProp) {
+      onLogoutProp();
+    }
+    onClose();
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-md animate-in fade-in duration-200">
-      <div className="relative w-full max-w-md overflow-hidden rounded-3xl border border-zinc-800 bg-zinc-950 p-6 sm:p-8 shadow-2xl ring-1 ring-blue-500/20">
+    <div id="auth-modal-overlay" className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-md animate-in fade-in duration-200 font-sans">
+      <div id="auth-modal-card" className="relative w-full max-w-md overflow-hidden rounded-3xl border border-zinc-800 bg-zinc-950 p-6 sm:p-8 shadow-2xl ring-1 ring-blue-500/20">
         
         {/* Decorative Glow */}
         <div className="pointer-events-none absolute -right-20 -top-20 h-48 w-48 rounded-full bg-blue-500/15 blur-3xl" />
@@ -94,6 +109,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
         {/* Close Button */}
         <button
+          id="btn-close-auth-modal"
           onClick={onClose}
           className="absolute right-4 top-4 rounded-xl p-2 text-zinc-400 hover:bg-zinc-900 hover:text-white transition-all"
         >
@@ -145,14 +161,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
             <div className="space-y-2.5">
               <button
-                onClick={onLogout}
-                className="w-full py-2.5 rounded-xl border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 font-semibold text-xs transition-all shadow-sm"
+                id="btn-logout-modal"
+                onClick={handleLogoutClick}
+                className="w-full py-3 rounded-xl border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 font-semibold text-xs transition-all shadow-sm min-h-[44px]"
               >
                 Se déconnecter de cette session
               </button>
               <button
                 onClick={onClose}
-                className="w-full py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold text-xs transition-all"
+                className="w-full py-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold text-xs transition-all min-h-[44px]"
               >
                 Retourner à mon Journal
               </button>
@@ -201,51 +218,57 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             </div>
 
             <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-medium text-zinc-300">Mot de passe</label>
-                {!isRegister && (
-                  <span className="text-[11px] text-blue-400 hover:underline cursor-pointer">
-                    Accès direct
-                  </span>
-                )}
-              </div>
+              <label className="text-xs font-medium text-zinc-300">
+                {isRegister ? 'Mot de passe (min. 8 car.)' : 'Mot de passe'}
+              </label>
               <div className="relative flex items-center">
                 <input
-                  type="password"
+                  type={showPassword ? 'text' : 'password'}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••"
-                  className="w-full rounded-xl border border-zinc-800 bg-zinc-900/90 pl-9 pr-3.5 py-2.5 text-xs text-white placeholder-zinc-500 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  placeholder="••••••••••••"
+                  className="w-full rounded-xl border border-zinc-800 bg-zinc-900/90 pl-9 pr-10 py-2.5 text-xs text-white placeholder-zinc-500 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  required
                 />
                 <Lock className="pointer-events-none absolute left-3 h-4 w-4 text-zinc-500" />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 text-zinc-400 hover:text-white"
+                >
+                  {showPassword ? <Eye className="h-4 w-4 text-blue-400" /> : <EyeOff className="h-4 w-4" />}
+                </button>
               </div>
             </div>
 
-            {/* Quick pre-filled badge for ease of use */}
-            <div className="p-2.5 rounded-xl border border-zinc-800/80 bg-zinc-900/40 flex items-center justify-between text-[11px] text-zinc-400">
-              <span className="flex items-center gap-1.5">
-                <Sparkles className="h-3.5 w-3.5 text-blue-400" />
-                Compte rapide détecté :
-              </span>
-              <button
-                type="button"
-                onClick={() => handleQuickDemoUser('mrtreize006@gmail.com', 'M. Treize')}
-                className="text-blue-400 hover:underline font-mono font-medium"
-              >
-                mrtreize006@gmail.com
-              </button>
-            </div>
+            {isRegister && (
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-zinc-300">Confirmer le mot de passe</label>
+                <div className="relative flex items-center">
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="••••••••••••"
+                    className="w-full rounded-xl border border-zinc-800 bg-zinc-900/90 pl-9 pr-3.5 py-2.5 text-xs text-white placeholder-zinc-500 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    required
+                  />
+                  <Lock className="pointer-events-none absolute left-3 h-4 w-4 text-zinc-500" />
+                </div>
+              </div>
+            )}
 
             <button
+              id="btn-auth-modal-submit"
               type="submit"
               disabled={loading}
-              className="w-full flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 py-2.5 text-xs font-semibold text-white shadow-lg shadow-blue-500/25 transition-all active:scale-[0.98] disabled:opacity-50"
+              className="w-full flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 py-3 text-xs font-semibold text-white shadow-lg shadow-blue-500/25 transition-all active:scale-[0.98] disabled:opacity-50 min-h-[44px]"
             >
               {loading ? (
                 <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
               ) : (
                 <>
-                  <span>{isRegister ? 'Créer mon compte & Démarrer' : 'Se connecter avec mon e-mail'}</span>
+                  <span>{isRegister ? 'Créer mon compte & Démarrer' : 'Se connecter'}</span>
                   <ArrowRight className="h-3.5 w-3.5" />
                 </>
               )}
@@ -259,12 +282,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   setIsRegister(!isRegister);
                   setError(null);
                 }}
-                className="text-xs text-zinc-400 hover:text-zinc-200 transition-colors"
+                className="text-xs text-zinc-400 hover:text-zinc-200 transition-colors py-1"
               >
                 {isRegister ? (
                   <>Déjà un compte ? <span className="text-blue-400 font-medium">Se connecter</span></>
                 ) : (
-                  <>Pas encore de compte ? <span className="text-blue-400 font-medium">Créer un compte gratuit</span></>
+                  <>Pas encore de compte ? <span className="text-blue-400 font-medium">Créer un compte</span></>
                 )}
               </button>
             </div>

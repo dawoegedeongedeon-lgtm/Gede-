@@ -1,9 +1,11 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
+import cookieParser from "cookie-parser";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
+import { authRouter } from "./src/server/auth/routes/auth.routes";
 
 dotenv.config();
 
@@ -418,8 +420,12 @@ async function startServer() {
     next();
   });
 
+  app.use(cookieParser());
   app.use(express.json({ limit: "25mb" }));
   app.use(express.urlencoded({ extended: true, limit: "25mb" }));
+
+  // Mount Modular Authentication Router
+  app.use("/api/auth", authRouter);
 
   // API Health check
   app.get("/api/health", (_req, res) => {
@@ -527,213 +533,6 @@ async function startServer() {
         return res.json({ success: true, totalTrades: db.trades.length });
       }
       return res.json({ success: true, totalTrades: 0 });
-    } catch (error: any) {
-      return res.status(500).json({ error: error.message });
-    }
-  });
-
-  // User Authentication & Session Management
-  app.post("/api/auth/login", (req, res) => {
-    try {
-      const { email, password, name } = req.body;
-      if (!email || !email.includes("@")) {
-        return res.status(400).json({ error: "Veuillez renseigner une adresse e-mail valide." });
-      }
-
-      if (!password || password.length < 4) {
-        return res.status(400).json({ error: "Le mot de passe doit contenir au moins 4 caractères." });
-      }
-
-      let db = readDatabase();
-      if (!db) {
-        db = { trades: [], playbooks: [], accounts: [], users: [], initialBalance: 25000, currency: "$", updatedAt: new Date().toISOString() };
-      }
-      if (!db.users) db.users = [];
-
-      const cleanEmail = email.toLowerCase().trim();
-      let user = db.users.find((u: any) => u.email.toLowerCase() === cleanEmail);
-
-      if (user) {
-        // If password is stored on user, check it
-        if (user.password && user.password !== password) {
-          return res.status(401).json({ error: "Mot de passe incorrect. Vérifiez votre saisie ou utilisez 'Mot de passe oublié ?'." });
-        }
-        // Update user name if changed
-        if (name && name !== user.name) {
-          user.name = name;
-        }
-        // Ensure password is saved
-        if (!user.password) {
-          user.password = password;
-        }
-        user.lastLoginAt = new Date().toISOString();
-        writeDatabase(db);
-      } else {
-        // Create new user dynamically for this new trader/student
-        const cleanName = name?.trim() || cleanEmail.split("@")[0].replace(/[._-]/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-        user = {
-          id: `user-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`,
-          email: cleanEmail,
-          password: password,
-          name: cleanName,
-          role: "Quant Trader",
-          plan: "Pro Desk & MT5 Live",
-          avatarUrl: `https://api.dicebear.com/7.x/bottts/svg?seed=${cleanEmail}`,
-          createdAt: new Date().toISOString(),
-          lastLoginAt: new Date().toISOString(),
-        };
-        db.users.push(user);
-        writeDatabase(db);
-      }
-
-      const token = `token_${Buffer.from(cleanEmail + ":" + Date.now()).toString("base64")}`;
-      // Do not leak password in client user object
-      const safeUser = { ...user };
-      delete safeUser.password;
-      return res.json({ success: true, user: safeUser, token });
-    } catch (error: any) {
-      return res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.post("/api/auth/register", (req, res) => {
-    try {
-      const { email, name, password } = req.body;
-      if (!email || !email.includes("@")) {
-        return res.status(400).json({ error: "Veuillez renseigner une adresse e-mail valide." });
-      }
-      if (!password || password.length < 6) {
-        return res.status(400).json({ error: "Le mot de passe doit contenir au moins 6 caractères." });
-      }
-
-      let db = readDatabase();
-      if (!db) {
-        db = { trades: [], playbooks: [], accounts: [], users: [], initialBalance: 25000, currency: "$", updatedAt: new Date().toISOString() };
-      }
-      if (!db.users) db.users = [];
-
-      const cleanEmail = email.toLowerCase().trim();
-      const existingUser = db.users.find((u: any) => u.email.toLowerCase() === cleanEmail);
-      if (existingUser) {
-        return res.status(400).json({ error: "Un compte existe déjà avec cette adresse e-mail. Veuillez vous connecter." });
-      }
-
-      const cleanName = name?.trim() || cleanEmail.split("@")[0].replace(/[._-]/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-      const newUser = {
-        id: `user-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`,
-        email: cleanEmail,
-        password: password,
-        name: cleanName,
-        role: "Trader Indépendant",
-        plan: "Pro Desk & MT5 Live",
-        avatarUrl: `https://api.dicebear.com/7.x/bottts/svg?seed=${cleanEmail}`,
-        createdAt: new Date().toISOString(),
-        lastLoginAt: new Date().toISOString(),
-      };
-      db.users.push(newUser);
-      writeDatabase(db);
-
-      const safeUser = { ...newUser };
-      delete safeUser.password;
-      return res.json({ success: true, user: safeUser, token: `token_${Date.now()}` });
-    } catch (error: any) {
-      return res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.post("/api/auth/google", (req, res) => {
-    try {
-      const { email, name, avatarUrl } = req.body;
-      if (!email || !email.includes("@")) {
-        return res.status(400).json({ error: "Adresse e-mail Google requise." });
-      }
-
-      let db = readDatabase();
-      if (!db) {
-        db = { trades: [], playbooks: [], accounts: [], users: [], initialBalance: 25000, currency: "$", updatedAt: new Date().toISOString() };
-      }
-      if (!db.users) db.users = [];
-
-      const cleanEmail = email.toLowerCase().trim();
-      let user = db.users.find((u: any) => u.email.toLowerCase() === cleanEmail);
-
-      if (!user) {
-        const cleanName = name?.trim() || cleanEmail.split("@")[0].replace(/[._-]/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-        user = {
-          id: `user-google-${Date.now().toString(36)}`,
-          email: cleanEmail,
-          name: cleanName,
-          role: "Quant Trader",
-          plan: "Pro Desk & MT5 Live",
-          avatarUrl: avatarUrl || `https://api.dicebear.com/7.x/bottts/svg?seed=${cleanEmail}`,
-          createdAt: new Date().toISOString(),
-          lastLoginAt: new Date().toISOString(),
-        };
-        db.users.push(user);
-        writeDatabase(db);
-      } else {
-        user.lastLoginAt = new Date().toISOString();
-        if (name) user.name = name;
-        if (avatarUrl) user.avatarUrl = avatarUrl;
-        writeDatabase(db);
-      }
-
-      const safeUser = { ...user };
-      delete safeUser.password;
-      return res.json({ success: true, user: safeUser, token: `token_${Date.now()}` });
-    } catch (error: any) {
-      return res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.post("/api/auth/reset-password", (req, res) => {
-    try {
-      const { email, newPassword } = req.body;
-      if (!email || !email.includes("@")) {
-        return res.status(400).json({ error: "Adresse e-mail valide requise." });
-      }
-      if (!newPassword || newPassword.length < 6) {
-        return res.status(400).json({ error: "Le nouveau mot de passe doit contenir au moins 6 caractères." });
-      }
-
-      let db = readDatabase();
-      if (!db || !db.users) {
-        return res.status(404).json({ error: "Aucun utilisateur trouvé avec cette adresse e-mail." });
-      }
-
-      const cleanEmail = email.toLowerCase().trim();
-      const user = db.users.find((u: any) => u.email.toLowerCase() === cleanEmail);
-      if (!user) {
-        return res.status(404).json({ error: "Aucun compte n'est enregistré avec cet e-mail." });
-      }
-
-      user.password = newPassword;
-      user.updatedAt = new Date().toISOString();
-      writeDatabase(db);
-
-      return res.json({ success: true, message: "Mot de passe réinitialisé avec succès ! Vous pouvez maintenant vous connecter." });
-    } catch (error: any) {
-      return res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.get("/api/auth/me", (req, res) => {
-    const db = readDatabase();
-    if (db && db.users && db.users.length > 0) {
-      return res.json({ success: true, user: db.users[db.users.length - 1] });
-    }
-    return res.json({ success: false, user: null });
-  });
-
-  app.post("/api/auth/delete-account", (req, res) => {
-    try {
-      const { email, id } = req.body;
-      let db = readDatabase();
-      if (db && db.users) {
-        db.users = db.users.filter((u: any) => u.email !== email && u.id !== id);
-        writeDatabase(db);
-      }
-      return res.json({ success: true, message: "Compte supprimé avec succès." });
     } catch (error: any) {
       return res.status(500).json({ error: error.message });
     }

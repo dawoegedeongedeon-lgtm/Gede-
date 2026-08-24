@@ -44,6 +44,7 @@ import { AddAccountModal } from './components/AddAccountModal';
 import { LoginPage } from './components/LoginPage';
 import { SettingsModal } from './components/SettingsModal';
 import { UserSettings, LanguageCode, ThemeAccentColor, ThemeBackgroundMode } from './types';
+import { useAuth } from './context/AuthContext';
 
 const DEFAULT_SETTINGS: UserSettings = {
   language: 'fr',
@@ -68,16 +69,8 @@ const STORAGE_KEYS = {
 };
 
 export default function App() {
-  // User Authentication State
-  const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
-    const stayLoggedIn = localStorage.getItem('tre13ze_journal_stay_logged_in');
-    const saved = localStorage.getItem(STORAGE_KEYS.USER);
-    if (saved && stayLoggedIn === 'true') {
-      try { return JSON.parse(saved); } catch (e) { console.error(e); }
-    }
-    // Return null initially so the login page from user's image is displayed!
-    return null;
-  });
+  // Global Auth State
+  const { user: currentUser, isLoading: isAuthLoading, logout, setUser: setCurrentUser } = useAuth();
 
   // Settings State
   const [settings, setSettings] = useState<UserSettings>(() => {
@@ -149,7 +142,6 @@ export default function App() {
   // Authentication & Settings Handlers
   const handleLoginSuccess = (user: UserProfile) => {
     setCurrentUser(user);
-    localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(user));
     setSyncToast({
       title: `Connecté : ${user.email}`,
       subtitle: `Bienvenue sur votre espace ${user.name || 'Trader'}`,
@@ -158,10 +150,8 @@ export default function App() {
     setTimeout(() => setSyncToast(null), 4000);
   };
 
-  const handleLogout = () => {
-    setCurrentUser(null);
-    localStorage.removeItem(STORAGE_KEYS.USER);
-    localStorage.removeItem('tre13ze_journal_stay_logged_in');
+  const handleLogout = async () => {
+    await logout();
     setIsSettingsModalOpen(false);
     setIsAuthModalOpen(false);
     setSyncToast({
@@ -177,19 +167,18 @@ export default function App() {
       await fetch('/api/auth/delete-account', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ email: currentUser?.email, id: currentUser?.id }),
       });
     } catch (e) {
       console.error(e);
     }
-    setCurrentUser(null);
-    localStorage.removeItem(STORAGE_KEYS.USER);
-    localStorage.removeItem('tre13ze_journal_stay_logged_in');
+    await logout();
     setIsSettingsModalOpen(false);
     setIsAuthModalOpen(false);
     setSyncToast({
       title: 'Compte Supprimé',
-      subtitle: 'Votre profil et vos sessions locales ont été effacés.',
+      subtitle: 'Votre profil et vos sessions ont été effacés.',
       pnl: 0,
     });
     setTimeout(() => setSyncToast(null), 4000);
@@ -562,6 +551,18 @@ export default function App() {
     if (settings.backgroundMode === 'navy') return 'bg-[#060d1b]';
     return 'bg-[#08090c]';
   }, [settings.backgroundMode]);
+
+  // Initial Auth Loading State
+  if (isAuthLoading) {
+    return (
+      <div className="min-h-screen w-full flex flex-col items-center justify-center bg-[#070b13] text-white">
+        <div className="flex flex-col items-center gap-4 animate-in fade-in duration-300">
+          <div className="h-10 w-10 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+          <p className="text-xs text-zinc-400 font-sans tracking-wide">Initialisation de la session Tre13ze...</p>
+        </div>
+      </div>
+    );
+  }
 
   // If user is not logged in, render the dynamic login / register page
   if (!currentUser) {

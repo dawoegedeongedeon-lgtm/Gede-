@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { Eye, EyeOff, Check, Sparkles, Shield, Lock, ArrowRight, HelpCircle, FileText, Info, Mail, User, KeyRound, AlertCircle, CheckCircle2, X } from 'lucide-react';
+import { Eye, EyeOff, Check, Shield, KeyRound, AlertCircle, CheckCircle2, X } from 'lucide-react';
 import { UserProfile } from '../types';
+import { useAuth } from '../context/AuthContext';
 
 interface LoginPageProps {
-  onLoginSuccess: (user: UserProfile) => void;
+  onLoginSuccess?: (user: UserProfile) => void;
   defaultEmail?: string;
 }
 
@@ -11,6 +12,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   onLoginSuccess,
   defaultEmail = '',
 }) => {
+  const { login, register, googleLogin, resetPassword } = useAuth();
+
   const [isRegisterMode, setIsRegisterMode] = useState(false);
   const [email, setEmail] = useState(() => {
     return localStorage.getItem('tre13ze_saved_email') || defaultEmail;
@@ -19,11 +22,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   const [confirmPassword, setConfirmPassword] = useState('');
   const [name, setName] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [stayLoggedIn, setStayLoggedIn] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  
+
   // Modals
   const [showModalInfo, setShowModalInfo] = useState<'terms' | 'privacy' | 'support' | null>(null);
   const [showForgotPasswordModal, setShowForgotPasswordModal] = useState(false);
@@ -32,6 +36,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   // Forgot password form state
   const [forgotEmail, setForgotEmail] = useState('');
   const [forgotNewPassword, setForgotNewPassword] = useState('');
+  const [forgotConfirmPassword, setForgotConfirmPassword] = useState('');
   const [forgotLoading, setForgotLoading] = useState(false);
   const [forgotError, setForgotError] = useState<string | null>(null);
   const [forgotSuccess, setForgotSuccess] = useState<string | null>(null);
@@ -46,6 +51,15 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       .match(/^[^\s@]+@[^\s@]+\.[^\s@]+$/);
   };
 
+  const getPasswordStrength = (pwd: string) => {
+    let score = 0;
+    if (pwd.length >= 8) score++;
+    if (/[a-zA-Z]/.test(pwd)) score++;
+    if (/[0-9]/.test(pwd)) score++;
+    if (/[^a-zA-Z0-9]/.test(pwd)) score++;
+    return score;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -57,50 +71,48 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       return;
     }
 
-    if (!password || password.length < (isRegisterMode ? 6 : 4)) {
-      setError(
-        isRegisterMode
-          ? 'Le mot de passe doit contenir au moins 6 caractères.'
-          : 'Veuillez saisir votre mot de passe.'
-      );
-      return;
-    }
-
-    if (isRegisterMode && password !== confirmPassword) {
-      setError('Les deux mots de passe ne correspondent pas.');
-      return;
+    if (isRegisterMode) {
+      if (!name || name.trim().length < 2) {
+        setError('Veuillez renseigner votre nom complet ou pseudo (au moins 2 caractères).');
+        return;
+      }
+      if (!password || password.length < 8) {
+        setError('Le mot de passe doit contenir au moins 8 caractères.');
+        return;
+      }
+      if (!/[0-9]/.test(password) || !/[a-zA-Z]/.test(password)) {
+        setError('Le mot de passe doit contenir à la fois des lettres et des chiffres.');
+        return;
+      }
+      if (password !== confirmPassword) {
+        setError('Les deux mots de passe ne correspondent pas.');
+        return;
+      }
+    } else {
+      if (!password) {
+        setError('Veuillez saisir votre mot de passe.');
+        return;
+      }
     }
 
     setLoading(true);
 
     try {
-      const endpoint = isRegisterMode ? '/api/auth/register' : '/api/auth/login';
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: cleanEmail,
-          name: name.trim(),
-          password,
-        }),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.error || 'Erreur lors de la connexion. Veuillez vérifier vos identifiants.');
+      let loggedUser: UserProfile;
+      if (isRegisterMode) {
+        loggedUser = await register(cleanEmail, name.trim(), password, confirmPassword);
+      } else {
+        loggedUser = await login(cleanEmail, password, stayLoggedIn);
       }
 
-      if (data.success && data.user) {
-        if (stayLoggedIn) {
-          localStorage.setItem('tre13ze_journal_stay_logged_in', 'true');
-          localStorage.setItem('tre13ze_saved_email', cleanEmail);
-        } else {
-          localStorage.removeItem('tre13ze_journal_stay_logged_in');
-        }
-        onLoginSuccess(data.user);
+      if (stayLoggedIn) {
+        localStorage.setItem('tre13ze_saved_email', cleanEmail);
       } else {
-        throw new Error('Réponse inattendue du serveur.');
+        localStorage.removeItem('tre13ze_saved_email');
+      }
+
+      if (onLoginSuccess) {
+        onLoginSuccess(loggedUser);
       }
     } catch (err: any) {
       setError(err.message || 'Une erreur est survenue lors de l\'authentification.');
@@ -121,44 +133,16 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     setError(null);
 
     try {
-      const res = await fetch('/api/auth/google', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: targetEmail,
-          name: chosenName?.trim() || targetEmail.split('@')[0],
-          avatarUrl: `https://api.dicebear.com/7.x/bottts/svg?seed=${targetEmail}`,
-        }),
-      });
-
-      const data = await res.json();
-      if (res.ok && data.success && data.user) {
-        if (stayLoggedIn) {
-          localStorage.setItem('tre13ze_journal_stay_logged_in', 'true');
-          localStorage.setItem('tre13ze_saved_email', targetEmail);
-        }
-        setShowGoogleModal(false);
-        onLoginSuccess(data.user);
-      } else {
-        throw new Error(data.error || 'Connexion Google échouée.');
-      }
-    } catch (err: any) {
-      // Fallback
-      const fallbackUser: UserProfile = {
-        id: `user-google-${Date.now().toString(36)}`,
-        email: targetEmail,
-        name: chosenName || targetEmail.split('@')[0],
-        role: 'Pro Quant Trader',
-        plan: 'Quant Elite & MT5 Live',
-        avatarUrl: `https://api.dicebear.com/7.x/bottts/svg?seed=${targetEmail}`,
-        createdAt: new Date().toISOString(),
-      };
+      const loggedUser = await googleLogin(targetEmail, chosenName?.trim());
       if (stayLoggedIn) {
-        localStorage.setItem('tre13ze_journal_stay_logged_in', 'true');
         localStorage.setItem('tre13ze_saved_email', targetEmail);
       }
       setShowGoogleModal(false);
-      onLoginSuccess(fallbackUser);
+      if (onLoginSuccess) {
+        onLoginSuccess(loggedUser);
+      }
+    } catch (err: any) {
+      setError(err.message || 'Connexion Google échouée.');
     } finally {
       setLoading(false);
     }
@@ -175,29 +159,21 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       return;
     }
 
-    if (!forgotNewPassword || forgotNewPassword.length < 6) {
-      setForgotError('Le nouveau mot de passe doit contenir au moins 6 caractères.');
+    if (!forgotNewPassword || forgotNewPassword.length < 8) {
+      setForgotError('Le nouveau mot de passe doit contenir au moins 8 caractères.');
+      return;
+    }
+
+    if (forgotNewPassword !== forgotConfirmPassword) {
+      setForgotError('Les deux mots de passe ne correspondent pas.');
       return;
     }
 
     setForgotLoading(true);
 
     try {
-      const res = await fetch('/api/auth/reset-password', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: forgotEmail.trim(),
-          newPassword: forgotNewPassword,
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Impossible de réinitialiser le mot de passe.');
-      }
-
-      setForgotSuccess(data.message || 'Mot de passe mis à jour ! Vous pouvez vous connecter.');
+      const res = await resetPassword(forgotEmail.trim(), forgotNewPassword, forgotConfirmPassword);
+      setForgotSuccess(res.message || 'Mot de passe mis à jour ! Vous pouvez vous connecter.');
       setEmail(forgotEmail.trim());
       setPassword(forgotNewPassword);
       setTimeout(() => {
@@ -211,8 +187,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     }
   };
 
+  const passwordStrength = getPasswordStrength(password);
+
   return (
-    <div className="relative min-h-screen w-full flex flex-col items-center justify-between bg-[#070b13] text-white selection:bg-blue-500 selection:text-white px-4 py-8 sm:py-12 overflow-x-hidden font-sans">
+    <div id="login-page-container" className="relative min-h-screen w-full flex flex-col items-center justify-between bg-[#070b13] text-white selection:bg-blue-500 selection:text-white px-4 py-8 sm:py-12 overflow-x-hidden font-sans">
       
       {/* Ambient background glow */}
       <div className="pointer-events-none absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-4xl h-96 bg-gradient-to-b from-blue-600/10 via-sky-600/5 to-transparent blur-3xl" />
@@ -222,7 +200,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       <div className="w-full max-w-md pt-2 sm:pt-6" />
 
       {/* Main Card */}
-      <div className="relative z-10 w-full max-w-[420px] mx-auto flex flex-col items-center animate-in fade-in zoom-in-95 duration-300">
+      <div id="login-card" className="relative z-10 w-full max-w-[420px] mx-auto flex flex-col items-center animate-in fade-in zoom-in-95 duration-300">
         
         {/* Title & Subtitle */}
         <div className="text-center space-y-2 mb-8">
@@ -238,13 +216,14 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
         {/* Continue with Google Button */}
         <button
+          id="btn-google-login"
           type="button"
           onClick={() => {
             setGoogleCustomEmail(email || '');
             setShowGoogleModal(true);
           }}
           disabled={loading}
-          className="w-full flex items-center justify-center gap-3 rounded-xl border border-zinc-800/90 bg-[#0c121e] hover:bg-[#121929] hover:border-zinc-700 py-3 px-4 text-sm sm:text-base font-medium text-white transition-all shadow-md active:scale-[0.99] disabled:opacity-50"
+          className="w-full flex items-center justify-center gap-3 rounded-xl border border-zinc-800/90 bg-[#0c121e] hover:bg-[#121929] hover:border-zinc-700 py-3.5 px-4 text-sm sm:text-base font-medium text-white transition-all shadow-md active:scale-[0.99] disabled:opacity-50 min-h-[48px]"
         >
           <svg className="h-5 w-5 shrink-0" viewBox="0 0 24 24">
             <path
@@ -281,12 +260,14 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           {/* If registering, show Name field */}
           {isRegisterMode && (
             <div className="space-y-1">
+              <label className="text-xs text-zinc-400 font-medium ml-1">Nom complet ou Pseudo</label>
               <div className="relative flex items-center rounded-xl border border-zinc-800/90 bg-[#0c121e] focus-within:border-blue-500 transition-all">
                 <input
+                  id="auth-input-name"
                   type="text"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  placeholder="Nom complet ou Pseudo (ex: Alex Trader)"
+                  placeholder="Alex Trader"
                   className="w-full bg-transparent px-4 py-3.5 text-sm text-white placeholder-zinc-500 focus:outline-none font-sans"
                   required
                 />
@@ -296,12 +277,14 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
           {/* Email Address Input */}
           <div className="space-y-1">
+            <label className="text-xs text-zinc-400 font-medium ml-1">Adresse e-mail</label>
             <div className="relative flex items-center rounded-xl border border-zinc-800/90 bg-[#0c121e] focus-within:border-blue-500 transition-all">
               <input
+                id="auth-input-email"
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="Votre adresse email (ex: trader@gmail.com)"
+                placeholder="votre-email@exemple.com"
                 className="w-full bg-transparent px-4 py-3.5 text-sm text-white placeholder-zinc-500 focus:outline-none font-sans"
                 required
                 autoComplete="email"
@@ -311,12 +294,16 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
           {/* Password Input with Visibility Toggle */}
           <div className="space-y-1">
+            <label className="text-xs text-zinc-400 font-medium ml-1">
+              {isRegisterMode ? 'Mot de passe (min. 8 car. + chiffres)' : 'Mot de passe'}
+            </label>
             <div className="relative flex items-center rounded-xl border border-zinc-800/90 bg-[#0c121e] focus-within:border-blue-500 transition-all">
               <input
+                id="auth-input-password"
                 type={showPassword ? 'text' : 'password'}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder={isRegisterMode ? "Mot de passe (min 6 caractères)" : "Mot de passe"}
+                placeholder="••••••••••••"
                 className="w-full bg-transparent pl-4 pr-12 py-3.5 text-sm text-white placeholder-zinc-500 focus:outline-none font-sans"
                 required
                 autoComplete={isRegisterMode ? "new-password" : "current-password"}
@@ -324,7 +311,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3.5 p-1 text-zinc-400 hover:text-white transition-colors"
+                className="absolute right-3.5 p-1.5 text-zinc-400 hover:text-white transition-colors"
                 title={showPassword ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
               >
                 {showPassword ? (
@@ -334,27 +321,71 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 )}
               </button>
             </div>
+
+            {/* Password strength indicator in register mode */}
+            {isRegisterMode && password.length > 0 && (
+              <div className="pt-1.5 px-1 space-y-1">
+                <div className="flex gap-1 h-1.5 w-full bg-zinc-800 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full transition-all duration-300 ${
+                      passwordStrength <= 1
+                        ? 'w-1/4 bg-rose-500'
+                        : passwordStrength === 2
+                        ? 'w-2/4 bg-amber-500'
+                        : passwordStrength === 3
+                        ? 'w-3/4 bg-blue-500'
+                        : 'w-full bg-emerald-500'
+                    }`}
+                  />
+                </div>
+                <div className="flex justify-between text-[11px] text-zinc-400">
+                  <span>Force du mot de passe :</span>
+                  <span className={`font-medium ${
+                    passwordStrength <= 1 ? 'text-rose-400' :
+                    passwordStrength === 2 ? 'text-amber-400' :
+                    passwordStrength === 3 ? 'text-blue-400' : 'text-emerald-400'
+                  }`}>
+                    {passwordStrength <= 1 ? 'Faible (min. 8 car. requis)' :
+                     passwordStrength === 2 ? 'Moyen' :
+                     passwordStrength === 3 ? 'Bon' : 'Robuste'}
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Confirm Password in Register Mode */}
           {isRegisterMode && (
             <div className="space-y-1">
+              <label className="text-xs text-zinc-400 font-medium ml-1">Confirmer le mot de passe</label>
               <div className="relative flex items-center rounded-xl border border-zinc-800/90 bg-[#0c121e] focus-within:border-blue-500 transition-all">
                 <input
-                  type={showPassword ? 'text' : 'password'}
+                  id="auth-input-confirm-password"
+                  type={showConfirmPassword ? 'text' : 'password'}
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
-                  placeholder="Confirmez le mot de passe"
-                  className="w-full bg-transparent px-4 py-3.5 text-sm text-white placeholder-zinc-500 focus:outline-none font-sans"
+                  placeholder="Confirmez votre mot de passe"
+                  className="w-full bg-transparent pl-4 pr-12 py-3.5 text-sm text-white placeholder-zinc-500 focus:outline-none font-sans"
                   required
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                  className="absolute right-3.5 p-1.5 text-zinc-400 hover:text-white transition-colors"
+                >
+                  {showConfirmPassword ? (
+                    <Eye className="h-5 w-5 text-blue-400" />
+                  ) : (
+                    <EyeOff className="h-5 w-5 text-zinc-400" />
+                  )}
+                </button>
               </div>
             </div>
           )}
 
           {/* Error display */}
           {error && (
-            <div className="flex items-center gap-2 text-xs text-rose-300 bg-rose-950/40 border border-rose-500/40 p-3 rounded-xl font-medium">
+            <div id="auth-error-banner" className="flex items-center gap-2 text-xs text-rose-300 bg-rose-950/40 border border-rose-500/40 p-3 rounded-xl font-medium animate-in fade-in duration-200">
               <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
               <span>{error}</span>
             </div>
@@ -362,7 +393,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
           {/* Success display */}
           {successMessage && (
-            <div className="flex items-center gap-2 text-xs text-emerald-300 bg-emerald-950/40 border border-emerald-500/40 p-3 rounded-xl font-medium">
+            <div className="flex items-center gap-2 text-xs text-emerald-300 bg-emerald-950/40 border border-emerald-500/40 p-3 rounded-xl font-medium animate-in fade-in duration-200">
               <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
               <span>{successMessage}</span>
             </div>
@@ -370,7 +401,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
           {/* Stay Logged In & Forgot Password Row */}
           <div className="flex items-center justify-between pt-1">
-            <label className="flex items-center gap-2 cursor-pointer select-none">
+            <label className="flex items-center gap-2 cursor-pointer select-none py-1">
               <div 
                 onClick={() => setStayLoggedIn(!stayLoggedIn)}
                 className={`flex h-4 w-4 items-center justify-center rounded border transition-all ${
@@ -398,7 +429,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                   setForgotSuccess(null);
                   setShowForgotPasswordModal(true);
                 }}
-                className="text-xs sm:text-sm text-[#2b86ff] hover:underline font-sans font-medium"
+                className="text-xs sm:text-sm text-[#2b86ff] hover:underline font-sans font-medium py-1"
               >
                 Mot de passe oublié ?
               </button>
@@ -407,9 +438,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
           {/* Primary Action Button: "Se connecter" / "Créer mon compte" */}
           <button
+            id="auth-submit-btn"
             type="submit"
             disabled={loading}
-            className="w-full rounded-xl bg-[#1d82f6] hover:bg-[#1871d6] active:bg-[#1563be] text-white font-semibold py-3.5 text-sm sm:text-base transition-all shadow-lg shadow-blue-600/30 hover:shadow-blue-500/40 active:scale-[0.99] disabled:opacity-50 mt-4 flex items-center justify-center gap-2 font-sans"
+            className="w-full rounded-xl bg-[#1d82f6] hover:bg-[#1871d6] active:bg-[#1563be] text-white font-semibold py-3.5 text-sm sm:text-base transition-all shadow-lg shadow-blue-600/30 hover:shadow-blue-500/40 active:scale-[0.99] disabled:opacity-50 mt-4 flex items-center justify-center gap-2 font-sans min-h-[48px]"
           >
             {loading ? (
               <div className="h-5 w-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -422,13 +454,14 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         {/* Toggle between Register and Login */}
         <div className="mt-6 text-center">
           <button
+            id="toggle-auth-mode-btn"
             type="button"
             onClick={() => {
               setIsRegisterMode(!isRegisterMode);
               setError(null);
               setSuccessMessage(null);
             }}
-            className="text-sm font-medium text-[#2b86ff] hover:underline transition-colors font-sans"
+            className="text-sm font-medium text-[#2b86ff] hover:underline transition-colors font-sans py-2"
           >
             {isRegisterMode ? 'Déjà un compte ? Se connecter' : 'Créer un compte'}
           </button>
@@ -440,19 +473,19 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         <div className="flex items-center justify-center gap-6 text-xs text-zinc-500 font-sans">
           <button 
             onClick={() => setShowModalInfo('terms')}
-            className="hover:text-zinc-300 transition-colors"
+            className="hover:text-zinc-300 transition-colors py-1"
           >
             Termes
           </button>
           <button 
             onClick={() => setShowModalInfo('privacy')}
-            className="hover:text-zinc-300 transition-colors"
+            className="hover:text-zinc-300 transition-colors py-1"
           >
             Confidentialité
           </button>
           <button 
             onClick={() => setShowModalInfo('support')}
-            className="hover:text-zinc-300 transition-colors"
+            className="hover:text-zinc-300 transition-colors py-1"
           >
             Soutien
           </button>
@@ -475,14 +508,14 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               </div>
               <button
                 onClick={() => setShowGoogleModal(false)}
-                className="p-1 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
+                className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
 
             <p className="text-xs text-zinc-400">
-              Renseignez l'adresse de votre compte Google pour vous connecter instantanément et synchroniser vos journaux de trading.
+              Renseignez votre adresse de messagerie Google pour vous connecter de façon sécurisée à votre compte Tre13ze Journal.
             </p>
 
             <div className="space-y-3">
@@ -493,7 +526,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                   value={googleCustomEmail}
                   onChange={(e) => setGoogleCustomEmail(e.target.value)}
                   placeholder="nom@gmail.com"
-                  className="w-full rounded-xl border border-zinc-800 bg-[#070b13] px-3.5 py-2.5 text-sm text-white focus:border-blue-500 focus:outline-none"
+                  className="w-full rounded-xl border border-zinc-800 bg-[#070b13] px-3.5 py-3 text-sm text-white focus:border-blue-500 focus:outline-none"
                 />
               </div>
 
@@ -504,7 +537,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                   value={googleCustomName}
                   onChange={(e) => setGoogleCustomName(e.target.value)}
                   placeholder="Votre Nom ou Pseudo de Trading"
-                  className="w-full rounded-xl border border-zinc-800 bg-[#070b13] px-3.5 py-2.5 text-sm text-white focus:border-blue-500 focus:outline-none"
+                  className="w-full rounded-xl border border-zinc-800 bg-[#070b13] px-3.5 py-3 text-sm text-white focus:border-blue-500 focus:outline-none"
                 />
               </div>
             </div>
@@ -541,14 +574,14 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               </div>
               <button
                 onClick={() => setShowForgotPasswordModal(false)}
-                className="p-1 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
+                className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
 
             <p className="text-xs text-zinc-400">
-              Entrez votre adresse e-mail ainsi que votre nouveau mot de passe pour mettre à jour vos accès immédiatement.
+              Entrez votre adresse e-mail ainsi que votre nouveau mot de passe (min. 8 caractères) pour mettre à jour vos accès en toute sécurité.
             </p>
 
             <form onSubmit={handleResetPasswordSubmit} className="space-y-3">
@@ -565,11 +598,23 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               </div>
 
               <div>
-                <label className="text-[11px] font-medium text-zinc-300 block mb-1">Nouveau Mot de Passe (min 6 caractères)</label>
+                <label className="text-[11px] font-medium text-zinc-300 block mb-1">Nouveau Mot de Passe (min. 8 caractères)</label>
                 <input
                   type="password"
                   value={forgotNewPassword}
                   onChange={(e) => setForgotNewPassword(e.target.value)}
+                  placeholder="••••••••••••"
+                  className="w-full rounded-xl border border-zinc-800 bg-[#070b13] px-3.5 py-2.5 text-sm text-white focus:border-blue-500 focus:outline-none"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] font-medium text-zinc-300 block mb-1">Confirmer le Nouveau Mot de Passe</label>
+                <input
+                  type="password"
+                  value={forgotConfirmPassword}
+                  onChange={(e) => setForgotConfirmPassword(e.target.value)}
                   placeholder="••••••••••••"
                   className="w-full rounded-xl border border-zinc-800 bg-[#070b13] px-3.5 py-2.5 text-sm text-white focus:border-blue-500 focus:outline-none"
                   required
@@ -623,17 +668,17 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             <div className="text-xs text-zinc-300 leading-relaxed max-h-60 overflow-y-auto space-y-2 pr-1">
               {showModalInfo === 'terms' && (
                 <p>
-                  Tre13ze Journal est une plateforme dédiée aux traders indépendants et étudiants, fournissant des outils de journalisation, de calcul de risque et d'analyse IA. Vos données de trading vous appartiennent entièrement.
+                  Tre13ze Journal est une plateforme SaaS de journalisation pour traders indépendants et étudiants, fournissant des outils de suivi de performance, calcul de risque et analyses IA. Vos données de trading vous appartiennent entièrement.
                 </p>
               )}
               {showModalInfo === 'privacy' && (
                 <p>
-                  Vos identifiants de compte et données de trades sont chiffrés et traités avec la plus stricte confidentialité. Aucun mot de passe de trading réel n'est partagé.
+                  Vos mots de passe sont chiffrés avec les standards cryptographiques les plus stricts (bcrypt 12 rounds) et stockés de façon sécurisée.
                 </p>
               )}
               {showModalInfo === 'support' && (
                 <p>
-                  Besoin d'aide ou d'assistance avec la synchronisation MT4/MT5 ou l'IA Coach ? Contactez l'administrateur ou consultez les guides de démarrage.
+                  Besoin d'aide avec votre compte ou vos journaux de trading ? Contactez l'assistance technique Tre13ze.
                 </p>
               )}
             </div>
