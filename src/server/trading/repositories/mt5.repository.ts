@@ -32,6 +32,7 @@ export interface IMt5Repository {
   deleteAccount(id: string): Promise<boolean>;
   logSync(log: Omit<Mt5SyncLogRecord, 'timestamp'>): Promise<Mt5SyncLogRecord>;
   getSyncLogs(userId: string, limit?: number): Promise<Mt5SyncLogRecord[]>;
+  count(): Promise<number>;
 }
 
 function mapPrismaMt5Account(r: any): Mt5AccountRecord {
@@ -169,6 +170,15 @@ export class PrismaMt5Repository implements IMt5Repository {
     } catch (err: any) {
       console.error('[PrismaMt5Repository.getSyncLogs Error]:', err.message);
       return [];
+    }
+  }
+
+  public async count(): Promise<number> {
+    try {
+      return await prisma.mt5Account.count();
+    } catch (err: any) {
+      console.error('[PrismaMt5Repository.count Error]:', err.message);
+      return 0;
     }
   }
 }

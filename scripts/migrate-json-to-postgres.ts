@@ -69,17 +69,24 @@ export async function runJsonToPostgresMigration(): Promise<MigrationReport> {
       report.errors.push(`JSON Read Error: ${e.message}`);
     }
   } else {
-    console.log('[Migration] No existing trades_db.json found. Creating initial seed data.');
+    console.log('[Migration] No trades_db.json file found. Skipping JSON migration.');
+    return report;
   }
 
-  // 1. Process Users (Only if present in JSON)
+  // Tracking map for userId normalization and references
+  const userIdMap = new Map<string, string>();
+
+  // 1. Process Users (Only if present in JSON - no fictitious users generated)
   const jsonUsers = Array.isArray(rawData.users) ? rawData.users : [];
   for (const u of jsonUsers) {
     if (!u || !u.email) continue;
     try {
       const existing = await userRepository.findByEmail(u.email);
-      if (!existing) {
-        await userRepository.create({
+      if (existing) {
+        if (u.id) userIdMap.set(u.id, existing.id);
+        userIdMap.set(u.email, existing.id);
+      } else {
+        const created = await userRepository.create({
           email: u.email,
           name: u.name || 'Trader',
           passwordHash: u.passwordHash,
@@ -89,8 +96,10 @@ export async function runJsonToPostgresMigration(): Promise<MigrationReport> {
           emailVerified: Boolean(u.emailVerified),
           lastLoginAt: u.lastLoginAt,
         });
+        if (u.id) userIdMap.set(u.id, created.id);
+        userIdMap.set(u.email, created.id);
         report.usersProcessed++;
-        console.log(`[Migration] User migrated: ${u.email}`);
+        console.log(`[Migration] User migrated: ${u.email} -> ID ${created.id}`);
       }
     } catch (err: any) {
       console.error(`[Migration] User ${u.email} error:`, err.message);
@@ -98,18 +107,21 @@ export async function runJsonToPostgresMigration(): Promise<MigrationReport> {
     }
   }
 
-  // Check if any existing user is present in DB for entity association
-  const existingUsers = await userRepository.listAll();
-  const primaryUserId = existingUsers.length > 0 ? existingUsers[0].id : null;
-
-  // 2. Process Playbooks (Global / System or User specific)
+  // 2. Process Playbooks (Global / System or User-specific)
   const jsonPlaybooks = Array.isArray(rawData.playbooks) ? rawData.playbooks : [];
   for (const pb of jsonPlaybooks) {
     if (!pb || !pb.id) continue;
     try {
+      let mappedUserId: string | undefined = undefined;
+      if (pb.userId) {
+        const resolvedId = userIdMap.get(pb.userId) || pb.userId;
+        const exists = await userRepository.findById(resolvedId);
+        if (exists) mappedUserId = exists.id;
+      }
+
       await playbookRepository.upsert({
         id: String(pb.id),
-        userId: pb.userId || undefined,
+        userId: mappedUserId,
         name: pb.name || 'Stratégie',
         description: pb.description,
         assetClass: Array.isArray(pb.assetClass) ? pb.assetClass : [],
@@ -129,14 +141,27 @@ export async function runJsonToPostgresMigration(): Promise<MigrationReport> {
   const jsonAccounts = Array.isArray(rawData.accounts) ? rawData.accounts : [];
   for (const acc of jsonAccounts) {
     if (!acc || !acc.id) continue;
-    if (!primaryUserId) {
-      console.log(`[Migration Notice] Account ${acc.id} skipped: No user found in database for mandatory foreign key.`);
+
+    // Resolve owner userId strictly
+    let targetUserId: string | null = null;
+    if (acc.userId) {
+      const resolved = userIdMap.get(acc.userId) || acc.userId;
+      const user = await userRepository.findById(resolved);
+      if (user) targetUserId = user.id;
+    } else if (acc.userEmail) {
+      const user = await userRepository.findByEmail(acc.userEmail);
+      if (user) targetUserId = user.id;
+    }
+
+    if (!targetUserId) {
+      console.log(`[Migration Notice] TradingAccount ${acc.id} skipped (no existing user mapped for foreign key).`);
       continue;
     }
+
     try {
       await tradingAccountRepository.upsert({
         id: String(acc.id),
-        userId: primaryUserId,
+        userId: targetUserId,
         name: acc.name || 'Compte Trading',
         brokerOrPropFirm: acc.brokerOrPropFirm || acc.broker,
         accountNumber: acc.accountNumber ? String(acc.accountNumber) : undefined,
@@ -159,14 +184,32 @@ export async function runJsonToPostgresMigration(): Promise<MigrationReport> {
   const jsonTrades = Array.isArray(rawData.trades) ? rawData.trades : [];
   for (const tr of jsonTrades) {
     if (!tr || !tr.id) continue;
-    if (!primaryUserId) {
-      console.log(`[Migration Notice] Trade ${tr.id} skipped: No user found in database for mandatory foreign key.`);
+
+    // Resolve owner userId strictly
+    let targetUserId: string | null = null;
+    if (tr.userId) {
+      const resolved = userIdMap.get(tr.userId) || tr.userId;
+      const user = await userRepository.findById(resolved);
+      if (user) targetUserId = user.id;
+    }
+
+    // Fallback: If trade references an account already present in DB, use that account's owner
+    if (!targetUserId && tr.accountId) {
+      const acc = await tradingAccountRepository.findById(tr.accountId);
+      if (acc && acc.userId) {
+        targetUserId = acc.userId;
+      }
+    }
+
+    if (!targetUserId) {
+      console.log(`[Migration Notice] Trade ${tr.id} skipped (no existing user mapped for foreign key).`);
       continue;
     }
+
     try {
       await tradeRepository.upsert({
         id: String(tr.id),
-        userId: primaryUserId,
+        userId: targetUserId,
         accountId: tr.accountId,
         ticketNumber: tr.ticketNumber ? String(tr.ticketNumber) : undefined,
         pair: tr.pair || 'EUR/USD',
@@ -216,14 +259,23 @@ export async function runJsonToPostgresMigration(): Promise<MigrationReport> {
   const jsonMt5Accounts = Array.isArray(rawData.mt5Accounts) ? rawData.mt5Accounts : [];
   for (const mt of jsonMt5Accounts) {
     if (!mt || !mt.id) continue;
-    if (!primaryUserId) {
-      console.log(`[Migration Notice] MT5 Account ${mt.id} skipped: No user found in database.`);
+
+    let targetUserId: string | null = null;
+    if (mt.userId) {
+      const resolved = userIdMap.get(mt.userId) || mt.userId;
+      const user = await userRepository.findById(resolved);
+      if (user) targetUserId = user.id;
+    }
+
+    if (!targetUserId) {
+      console.log(`[Migration Notice] MT5 Account ${mt.id} skipped (no user mapped).`);
       continue;
     }
+
     try {
       await mt5Repository.upsertAccount({
         id: String(mt.id),
-        userId: primaryUserId,
+        userId: targetUserId,
         accountName: mt.accountName || `${mt.server} #${mt.accountNumber}`,
         server: mt.server || 'FTMO-Server',
         accountNumber: String(mt.accountNumber || '1029482'),
@@ -246,8 +298,7 @@ export async function runJsonToPostgresMigration(): Promise<MigrationReport> {
     report.dbCounts.accounts = await tradingAccountRepository.count();
     report.dbCounts.playbooks = await playbookRepository.count();
     report.dbCounts.trades = await tradeRepository.count();
-    const mt5Accs = await mt5Repository.getAccounts(primaryUserId);
-    report.dbCounts.mt5Accounts = mt5Accs.length;
+    report.dbCounts.mt5Accounts = await mt5Repository.count();
   } catch (err: any) {
     console.error('[Migration] Count verification error:', err.message);
   }
@@ -264,4 +315,3 @@ export async function runJsonToPostgresMigration(): Promise<MigrationReport> {
 
   return report;
 }
-
